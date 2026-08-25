@@ -33,7 +33,7 @@ function pick(phrases) {
 }
 
 const FLAVOR = {
-  boot: ["Packing the line gear…", "Loading the buggy…", "Checking out gear from cache…"],
+  boot: ["Packing line gear…", "Loading Topper", "Fighting with supply..."],
   install: ["Sharpening the pulaskis…", "Fueling up the saws…", "Testing the radios…"],
   briefing: ["Getting the morning briefing…", "Checking the weather…", "Reviewing the IAP…"],
   reading: ["Sizing up the fire…", "Scouting the perimeter…", "Walking the line…"],
