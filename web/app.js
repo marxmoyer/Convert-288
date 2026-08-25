@@ -46,6 +46,7 @@ const DEFAULT_TRANS_RULES = {
   "21": { include: true, note: "Overtime hours" },
   "14": { include: false, flag: "H", note: "Hazard pay differential — flags the matching worked-hours row with H instead of adding separate hours" },
   "66": { include: false, note: "Administrative leave — not incident work, excluded entirely (no flag)" },
+  "31": { include: true, note: "Holiday worked at the basic rate of pay" },
 };
 
 function normalizeEmployeeKey(name) {
