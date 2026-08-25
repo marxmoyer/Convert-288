@@ -166,7 +166,20 @@ def fill(paystub, groups, reserved, template_path, profile, out_path):
 
         employment_type = profile.get("3_type_of_employment") or "Federal"
         type_cell = TYPE_OF_EMPLOYMENT_CELLS.get(employment_type, TYPE_OF_EMPLOYMENT_CELLS["Federal"])
+        # The template ships with the Federal checkbox (M4) pre-marked "X"
+        # (a leftover from whatever filled form it was derived from) —
+        # clear every option first so Casual/Other don't end up with two
+        # X's on the printed form.
+        for cell in TYPE_OF_EMPLOYMENT_CELLS.values():
+            _set(ws, cell, None)
         _set(ws, type_cell, "X")
+
+        # Row 28's Year cell is a per-page constant, not per-incident data,
+        # and the template ships with a hardcoded "2026" under every
+        # column block (another leftover) — write the real year to all
+        # four up front so an unused column never shows a stale year.
+        for cmap in COLUMN_MAPS.values():
+            _set(ws, cmap["year"], paystub.year)
 
         page_total = 0.0
         first_col_on_page = {}
@@ -207,7 +220,6 @@ def fill(paystub, groups, reserved, template_path, profile, out_path):
             # spreadsheet app. col_total here is only used for our own
             # returned grand_total, not written anywhere.
 
-            _set(ws, cmap["year"], paystub.year)
             page_total += col_total
 
         # Item 17 (grand total) is also a live formula in the template
