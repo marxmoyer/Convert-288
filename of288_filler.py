@@ -161,10 +161,17 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
             if flag:
                 entry["flags"].add(flag)
 
-    # drop any date left with zero hours and no flag (can happen when a
-    # date's only contributions were later found to net to nothing)
+    # Drop any date left with zero hours, flag or no — a flag (e.g. "H" for
+    # hazard) has nothing to attach to without real worked hours on the same
+    # date to anchor a row to. This does happen with real user choices, not
+    # just synthetic data: e.g. a date where the only real (included) trans
+    # code got excluded by the user but a flagged-only trans code (like
+    # hazard pay, always excluded-with-flag) remains — that flag is now
+    # orphaned. Leaving it in previously crashed allocate_rows downstream
+    # (it tried to consume a 0-hour target, got an empty segment list, then
+    # indexed into it).
     for group in groups.values():
-        for d in [d for d, e in group["dates"].items() if e["hours"] <= 0 and not e["flags"]]:
+        for d in [d for d, e in group["dates"].items() if e["hours"] <= 0]:
             del group["dates"][d]
 
     return groups, reserved
@@ -260,6 +267,12 @@ def allocate_rows(paystub, groups, reserved):
         for name, target in needs:
             entry = groups[name]["dates"][d]
             consumed = consumed_by_name[name]
+            if not consumed:
+                # Defense in depth: build_groups already drops zero-hour
+                # dates before this point, so target should never be 0 here
+                # — but if it ever is, there's nothing to build a row from
+                # rather than crashing on consumed[0] below.
+                continue
 
             # merge contiguous segments (stop == next start) into one row
             merged = []

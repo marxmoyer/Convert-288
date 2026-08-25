@@ -194,7 +194,10 @@ function renderRulesView(employeeKey) {
     transCodeRulesView.textContent = "";
     return;
   }
-  jobcodeRulesView.textContent = JSON.stringify(loadJobcodeRules(employeeKey), null, 2) || "(none yet)";
+  const jobcodeRules = loadJobcodeRules(employeeKey);
+  jobcodeRulesView.textContent = Object.keys(jobcodeRules).length
+    ? JSON.stringify(jobcodeRules, null, 2)
+    : "(none yet)";
   transCodeRulesView.textContent = JSON.stringify(loadTransCodeRules(employeeKey), null, 2);
 }
 
@@ -389,6 +392,8 @@ def _run():
         f"({stub.period_start} - {stub.period_end})"
     ]
     for name, g in groups.items():
+        if not g["dates"]:
+            continue  # every date this group had got excluded down to nothing
         total = sum(e["hours"] for e in g["dates"].values())
         summary_lines.append(
             f"  {name} (accounting code {g['meta']['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)"

@@ -61,6 +61,8 @@ def main():
     print(f"Employee: {paystub.employee_name}  PP{paystub.pay_period_number} {paystub.year} "
           f"({paystub.period_start} - {paystub.period_end})")
     for name, g in groups.items():
+        if not g["dates"]:
+            continue  # every date this group had got excluded down to nothing
         total = sum(e["hours"] for e in g["dates"].values())
         print(f"  {name} (accounting code {g['meta']['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)")
     print(f"Total hours (all columns): {grand_total:g}")
