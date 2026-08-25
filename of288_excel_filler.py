@@ -110,7 +110,11 @@ def _build_column_map(base_letter):
             "stop": f"{_offset(base_letter, grid_offsets['stop'])}{row}",
             "flag": f"{_offset(base_letter, grid_offsets['flag'])}{row}",
         })
-    year_cell = f"{base_letter}{YEAR_TOTAL_ROW}"
+    # Row 28's base column holds the static "Year" label; the actual
+    # value cell is one column over (verified against the template: A28
+    # = "Year" (label), B28 = the year value, same +1 pattern for every
+    # block). Writing to the base column would clobber the label instead.
+    year_cell = f"{_offset(base_letter, 1)}{YEAR_TOTAL_ROW}"
 
     return {"meta": meta_cells, "grid": grid, "year": year_cell}
 
