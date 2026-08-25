@@ -1,0 +1,7 @@
+{
+  "_comment": "How each Paycheck8 'Trans Code' contributes to OF-288 hours. Unrecognized trans codes cause the tool to stop and ask, rather than guess. Edit this file as new trans codes show up on future paystubs.",
+  "01": {"include": true, "note": "Regular hours"},
+  "21": {"include": true, "note": "Overtime hours"},
+  "14": {"include": false, "flag": "H", "note": "Hazard pay differential — not separate hours, flags the matching worked-hours row with H per IBG instructions"},
+  "66": {"include": false, "note": "Administrative leave — not incident work, excluded entirely (no flag)"}
+}
