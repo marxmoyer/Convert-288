@@ -12,7 +12,7 @@ import json
 from itertools import permutations
 
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import NameObject, RectangleObject
+from pypdf.generic import DictionaryObject, NameObject, RectangleObject
 
 TYPE_OF_EMPLOYMENT_EXPORT_VALUES = {"Casual": "1", "Federal": "0", "Other": "2"}
 
@@ -25,18 +25,41 @@ INCIDENT_META_FIELDS = [
     "fire_code", "resource_request_number", "position_code",
 ]
 
-# The template's text fields default to a 5.5-6.8pt Tahoma appearance.
+# The template's text fields default to a 5.5-6.8pt Tahoma appearance, and
+# the template's font resources (Helv, Tahoma, ZaDb) have no bold variant.
+# We fill with a standard Helvetica-Bold instead — one of the 14 base PDF
+# fonts, so it renders correctly in any viewer with no embedding needed —
+# registered into the AcroForm's resource dict by _ensure_bold_font().
 # Grid cells (Mo/Day/Start/Stop/Hours) get their boxes stretched by
 # GRID_ROW_PAD (see _enlarge_grid_rects) to make room for a bigger font
 # than the original tight 5.5pt box allowed.
-FONT_NAME = "/Tahoma"
-GRID_FONT_SIZE = 9.0
-TOTALS_FONT_SIZE = 6.5  # Year / Total Hours boxes are only 6.8pt tall
-HEADER_FONT_SIZE = 7.5
+FONT_NAME = "/HeBo"
+GRID_FONT_SIZE = 10.0
+TOTALS_FONT_SIZE = 7.5  # Year / Total Hours boxes are only 6.8pt tall
+HEADER_FONT_SIZE = 8.5
 
 
 def _t(text, size=HEADER_FONT_SIZE):
     return (text, FONT_NAME, size)
+
+
+def _ensure_bold_font(writer):
+    """Register standard Helvetica-Bold as a fillable font resource. The
+    template only ships Helv/Tahoma/ZaDb, none bold, so this adds one
+    rather than trying to fake bold with the existing (non-bold) fonts.
+    """
+    font_dict = DictionaryObject({
+        NameObject("/Type"): NameObject("/Font"),
+        NameObject("/Subtype"): NameObject("/Type1"),
+        NameObject("/BaseFont"): NameObject("/Helvetica-Bold"),
+        NameObject("/Encoding"): NameObject("/WinAnsiEncoding"),
+    })
+    font_ref = writer._add_object(font_dict)
+
+    acro_form = writer._root_object["/AcroForm"]
+    dr = acro_form["/DR"]
+    font_resources = dr["/Font"]
+    font_resources[NameObject(FONT_NAME)] = font_ref
 
 
 class UnrecognizedCodeError(ValueError):
@@ -379,6 +402,7 @@ def _fill_one_page(paystub, profile, field_map, page_assignments, template_path)
     reader = PdfReader(template_path)
     writer = PdfWriter()
     writer.append(reader)
+    _ensure_bold_font(writer)
     _enlarge_grid_rects(writer, field_map)
     writer.update_page_form_field_values(writer.pages[0], values, auto_regenerate=False)
 
