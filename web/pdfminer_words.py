@@ -31,6 +31,17 @@ def extract_words(pdf_path):
         run = []
         for obj in line:
             if isinstance(obj, LTChar):
+                if obj.get_text().isspace():
+                    # A literal space glyph glued into the same line without
+                    # an LTAnno boundary (seen e.g. between adjacent table
+                    # cells like a trans code and the next column's value)
+                    # is a word break too — otherwise they merge into one
+                    # token (e.g. "21 66"), corrupting column alignment
+                    # downstream in paycheck8_parser.
+                    if run:
+                        words.append(_word_from_run(run, page_height))
+                        run = []
+                    continue
                 run.append(obj)
                 continue
             # LTAnno marks whitespace pdfminer inserted between words/lines

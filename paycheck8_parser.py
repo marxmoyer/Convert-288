@@ -141,12 +141,21 @@ def parse_from_words(words):
     period_end = date(int(range_m.group(6)), int(range_m.group(4)), int(range_m.group(5)))
     total_hours = float(total_m.group(1))
 
-    # header date row: two weeks of "M/D" labels, all on the same `top`
+    # header date row: two weeks of "M/D" labels, all on the same `top`.
+    # Other fields on the page (e.g. an "Official/Corrected: 1/1" stamp) can
+    # also match the M/D pattern, so picking the first match in extraction
+    # order isn't reliable — instead pick the `top` with the most matches
+    # within tolerance, since the real header row has ~14 date labels and a
+    # stray field has only one.
     date_header_words = [w for w in words if DATE_HDR_RE.match(w["text"])]
     if not date_header_words:
         raise ValueError("Could not find daily-hours date header row")
-    header_top = date_header_words[0]["top"]
-    date_header_words = [w for w in words if DATE_HDR_RE.match(w["text"]) and abs(w["top"] - header_top) < 2]
+    candidate_tops = sorted({w["top"] for w in date_header_words})
+    header_top = max(
+        candidate_tops,
+        key=lambda t: sum(1 for w in date_header_words if abs(w["top"] - t) < 2),
+    )
+    date_header_words = [w for w in date_header_words if abs(w["top"] - header_top) < 2]
     date_header_words.sort(key=lambda w: w["x0"])
 
     columns = []  # (date, x0)
