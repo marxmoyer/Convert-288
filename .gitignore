@@ -13,6 +13,9 @@ wheels/
 profile.json
 testoutput/
 *.xlsx
+# ...except the blank Excel template itself — same category as
+# OF288-Fillable.pdf, a safe non-personal form template, not payroll data.
+!ref/OF288 Excel Blank Template.xlsx
 USDA FS Paycheck8*.pdf
 exsamples/
 paystubs !notpublic!/
