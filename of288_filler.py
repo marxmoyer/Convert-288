@@ -366,7 +366,11 @@ def _fill_one_page(paystub, profile, field_map, page_assignments, template_path)
     values[field_map["item17_total_hours"]] = _t(f"{page_total:g}", TOTALS_FONT_SIZE)
 
     radio_field = field_map["radio_type_of_employment"]
-    values[radio_field] = f"/{TYPE_OF_EMPLOYMENT_EXPORT_VALUES[profile.get('3_type_of_employment', 'Federal')]}"
+    # profile.get(..., "Federal") only falls back when the key is *missing*,
+    # not when it's present-but-empty (e.g. a blank/unselected form field),
+    # so guard against that case too rather than KeyError on a bad value.
+    employment_type = profile.get("3_type_of_employment") or "Federal"
+    values[radio_field] = f"/{TYPE_OF_EMPLOYMENT_EXPORT_VALUES.get(employment_type, TYPE_OF_EMPLOYMENT_EXPORT_VALUES['Federal'])}"
 
     same_as_map = field_map["same_as_checkboxes"]
     for col, ref_col in checkboxes.items():

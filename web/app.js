@@ -142,7 +142,14 @@ function loadProfileIntoForm(employeeKey) {
   const emp = getEmployee(employeeKey);
   const saved = emp ? emp.profile : {};
   for (const [inputId, profileKey] of Object.entries(PROFILE_FIELDS)) {
-    document.getElementById(inputId).value = saved[profileKey] || "";
+    // Only overwrite when there's an actual saved value — forcing "" onto
+    // the Type of Employment <select> (which has no blank option) leaves it
+    // with no real selection at all despite still visually showing
+    // "Federal", so a brand-new employee's profile would silently save an
+    // empty string there and crash the conversion downstream.
+    if (saved[profileKey]) {
+      document.getElementById(inputId).value = saved[profileKey];
+    }
   }
 }
 
