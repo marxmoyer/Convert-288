@@ -50,13 +50,19 @@
   #status.result { text-align: left; }
   #status.error { background: #fdeaea; border-color: #e0a0a0; color: #7a1f1f; text-align: left; }
 
-  #controls { display: flex; gap: 0.5rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+  #controls { margin-top: 1rem; }
   button {
     padding: 0.55rem 1.1rem; font-size: 1rem; cursor: pointer; border: none; border-radius: 6px;
     background: var(--fs-green); color: white; font-weight: 600;
   }
   button:hover:not(:disabled) { background: var(--fs-green-dark); }
   button:disabled { cursor: default; opacity: 0.45; }
+
+  #convertBtn {
+    display: block; width: 100%; padding: 0.9rem; font-family: var(--font-display);
+    font-size: 1.3rem; font-weight: 700; letter-spacing: 0.02em; border-radius: 10px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
 
   #downloads { margin-top: 1rem; }
   #downloads a {

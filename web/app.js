@@ -43,6 +43,12 @@ const FLAVOR = {
     "Checking for 16s and H…", "Gridding for hot spots…", "Running the pulaski…",
     "Doing the LCES check…", "Mopping up…", "Reading the 214…",
   ],
+  ready: [
+    "Anchor point secured — drop a paystub above.",
+    "Staged and ready for dispatch — drop a paystub above.",
+    "Holding at the trailhead — drop a paystub above when you're ready.",
+    "Crew's briefed and standing by — drop a paystub above.",
+  ],
 };
 
 // Assets shared with the desktop CLI live one directory up; pdfminer_words.py
@@ -258,7 +264,7 @@ if "/" not in sys.path:
     sys.path.insert(0, "/")
 `);
 
-    setResult("Ready. Choose a paystub PDF to convert.");
+    setStatus(pick(FLAVOR.ready));
     fileInput.disabled = false;
     convertBtn.disabled = false;
   } catch (err) {
