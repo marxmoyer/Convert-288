@@ -15,6 +15,15 @@ from pypdf.generic import NameObject, RectangleObject
 
 TYPE_OF_EMPLOYMENT_EXPORT_VALUES = {"Casual": "1", "Federal": "0", "Other": "2"}
 
+# Incident metadata (items 8-12) that a jobcode rule can carry, on top of
+# which group it belongs to. None of this is derivable from the paystub —
+# it comes from the resource order — so it's whatever the jobcode_rules
+# entry (or a trans_overrides entry) says, defaulting to blank.
+INCIDENT_META_FIELDS = [
+    "accounting_code", "incident_name", "incident_order_number",
+    "fire_code", "resource_request_number", "position_code",
+]
+
 # The template's text fields default to a 5.5-6.8pt Tahoma appearance.
 # Grid cells (Mo/Day/Start/Stop/Hours) get their boxes stretched by
 # GRID_ROW_PAD (see _enlarge_grid_rects) to make room for a bigger font
@@ -67,7 +76,7 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
     excluded, which depends on assignment dates the paystub doesn't carry,
     so it's a per-case override rather than a general rule.
 
-    Returns {group_name: {"accounting_code": str, "dates": {date: {"hours": float, "flags": set[str]}}}}
+    Returns {group_name: {"meta": {...incident fields...}, "dates": {date: {"hours": float, "flags": set[str]}}}}
     """
     groups = {}
     for line in paystub.lines:
@@ -83,8 +92,8 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
         override = job_cfg.get("trans_overrides", {}).get(line.trans_code)
         if override is not None:
             trans_cfg = override
-            group_name = override.get("group", job_cfg.get("group"))
-            accounting_code = override.get("accounting_code", job_cfg.get("accounting_code"))
+            source_cfg = {**job_cfg, **override}
+            group_name = source_cfg.get("group")
         else:
             if not job_cfg["include"]:
                 continue
@@ -96,14 +105,16 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
                     kind="trans_code", jobcode=line.jobcode, override=line.override,
                     trans_code=line.trans_code, hours_by_date=line.hours_by_date,
                 )
+            source_cfg = job_cfg
             group_name = job_cfg["group"]
-            accounting_code = job_cfg["accounting_code"]
+
+        meta = {field: source_cfg.get(field, "") for field in INCIDENT_META_FIELDS}
 
         flag = trans_cfg.get("flag")
         if not trans_cfg.get("include") and not flag:
             continue  # contributes nothing to the OF-288 (e.g. admin leave)
 
-        group = groups.setdefault(group_name, {"accounting_code": accounting_code, "dates": {}})
+        group = groups.setdefault(group_name, {"meta": meta, "dates": {}})
         for d, hours in line.hours_by_date.items():
             entry = group["dates"].setdefault(d, {"hours": 0.0, "flags": set()})
             if trans_cfg.get("include"):
@@ -205,7 +216,7 @@ def _plan_column_assignments(groups, rows_by_group, grid_len):
             chunk, remaining = remaining[:grid_len], remaining[grid_len:]
             assignments.append({
                 "group": group_name,
-                "accounting_code": group["accounting_code"],
+                "meta": group["meta"],
                 "rows": chunk,
             })
     return assignments
@@ -270,7 +281,13 @@ def _fill_one_page(paystub, profile, field_map, page_assignments, template_path)
 
         if group_name not in first_col_on_page:
             first_col_on_page[group_name] = col
-            values[col_map["15_accounting_code"]] = _t(assignment["accounting_code"])
+            meta = assignment["meta"]
+            values[col_map["8_incident_name"]] = _t(meta.get("incident_name", ""))
+            values[col_map["9_incident_order_number"]] = _t(meta.get("incident_order_number", ""))
+            values[col_map["10_fire_code"]] = _t(meta.get("fire_code", ""))
+            values[col_map["11_resource_request_number"]] = _t(meta.get("resource_request_number", ""))
+            values[col_map["12_position_code"]] = _t(meta.get("position_code", ""))
+            values[col_map["15_accounting_code"]] = _t(meta.get("accounting_code", ""))
         else:
             checkboxes[col] = first_col_on_page[group_name]
 

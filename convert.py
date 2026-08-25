@@ -62,7 +62,7 @@ def main():
           f"({paystub.period_start} - {paystub.period_end})")
     for name, g in groups.items():
         total = sum(e["hours"] for e in g["dates"].values())
-        print(f"  {name} (accounting code {g['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)")
+        print(f"  {name} (accounting code {g['meta']['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)")
     print(f"Total hours (all columns): {grand_total:g}")
     if len(out_paths) > 1:
         print(f"Needed {len(out_paths)} sheets (more incidents/rows than one form's 4 columns hold):")

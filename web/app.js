@@ -10,6 +10,7 @@ const resolvePanel = document.getElementById("resolvePanel");
 const jobcodeRulesView = document.getElementById("jobcodeRulesView");
 const transCodeRulesView = document.getElementById("transCodeRulesView");
 const resetRulesBtn = document.getElementById("resetRulesBtn");
+const employeeBanner = document.getElementById("employeeBanner");
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -19,7 +20,7 @@ function setStatus(text, isError = false) {
 // Assets shared with the desktop CLI live one directory up; pdfminer_words.py
 // is browser-only (replaces pdfplumber, which can't install under Pyodide).
 // profile.json / jobcode_rules.json / trans_code_rules.json are NOT fetched
-// from the repo — they're personal to each user, kept in this browser's
+// from the repo — they're personal to each employee, kept in this browser's
 // localStorage only, and written into the Pyodide filesystem fresh before
 // every conversion.
 const SHARED_ASSETS = [
@@ -30,9 +31,69 @@ const SHARED_ASSETS = [
 ];
 const LOCAL_ASSETS = ["pdfminer_words.py"];
 
-// --- Profile (name/hiring-unit fields) ---------------------------------
+// --- Per-employee storage -------------------------------------------------
+//
+// One person often runs this for a whole crew, not just themselves, so
+// storage is keyed by employee (detected from the paystub's own "Employee
+// Name" field) rather than assuming one browser == one employee. Each
+// employee gets their own profile fields, jobcode rules, and trans-code
+// rules, all under one localStorage entry.
 
-const PROFILE_STORAGE_KEY = "of288_profile_v1";
+const EMPLOYEES_KEY = "of288_employees_v1";
+
+const DEFAULT_TRANS_RULES = {
+  "01": { include: true, note: "Regular hours" },
+  "21": { include: true, note: "Overtime hours" },
+  "14": { include: false, flag: "H", note: "Hazard pay differential — flags the matching worked-hours row with H instead of adding separate hours" },
+  "66": { include: false, note: "Administrative leave — not incident work, excluded entirely (no flag)" },
+};
+
+function normalizeEmployeeKey(name) {
+  return name.trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+function loadAllEmployees() {
+  try {
+    return JSON.parse(localStorage.getItem(EMPLOYEES_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveAllEmployees(employees) {
+  try {
+    localStorage.setItem(EMPLOYEES_KEY, JSON.stringify(employees));
+  } catch {
+    // localStorage unavailable (private mode, quota, etc.) — non-fatal
+  }
+}
+
+function getEmployee(key) {
+  return loadAllEmployees()[key] || null;
+}
+
+function ensureEmployee(key, displayName) {
+  const employees = loadAllEmployees();
+  if (!employees[key]) {
+    employees[key] = {
+      displayName,
+      profile: {},
+      jobcode_rules: {},
+      trans_code_rules: { ...DEFAULT_TRANS_RULES },
+    };
+    saveAllEmployees(employees);
+  }
+  return employees[key];
+}
+
+function updateEmployee(key, patch) {
+  const employees = loadAllEmployees();
+  employees[key] = { ...employees[key], ...patch };
+  saveAllEmployees(employees);
+}
+
+// --- Profile form ----------------------------------------------------------
+
 const PROFILE_FIELDS = {
   p_hired_at: "1_hired_at",
   p_eci: "2_employee_common_identifier",
@@ -42,90 +103,64 @@ const PROFILE_FIELDS = {
   p_fax: "7_hiring_unit_fax",
 };
 
-function loadProfileIntoForm() {
-  let saved = {};
-  try {
-    saved = JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY) || "{}");
-  } catch {
-    // ignore corrupt/missing storage, just start blank
-  }
+function loadProfileIntoForm(employeeKey) {
+  const emp = getEmployee(employeeKey);
+  const saved = emp ? emp.profile : {};
   for (const [inputId, profileKey] of Object.entries(PROFILE_FIELDS)) {
-    if (saved[profileKey] !== undefined) {
-      document.getElementById(inputId).value = saved[profileKey];
-    }
+    document.getElementById(inputId).value = saved[profileKey] || "";
   }
 }
 
-function readProfileFromForm() {
+function readProfileFromForm(employeeKey) {
   const profile = {};
   for (const [inputId, profileKey] of Object.entries(PROFILE_FIELDS)) {
     profile[profileKey] = document.getElementById(inputId).value.trim();
   }
-  try {
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
-  } catch {
-    // localStorage unavailable (private mode, quota, etc.) — non-fatal
-  }
+  updateEmployee(employeeKey, { profile });
   return profile;
 }
 
-// --- Jobcode / trans-code rules (per-browser, editable) -----------------
+function profileLooksComplete(profile) {
+  return Boolean(profile["1_hired_at"] && profile["4_hiring_unit_name"]);
+}
 
-const JOBCODE_RULES_KEY = "of288_jobcode_rules_v1";
-const TRANS_CODE_RULES_KEY = "of288_trans_code_rules_v1";
+// --- Jobcode / trans-code rules ---------------------------------------
 
-// Trans codes 01/21/14/66 look like agency-standard Paycheck8 definitions
-// rather than anything personal, so every new user starts with these
-// pre-filled — editable/removable like anything else in localStorage.
-const DEFAULT_TRANS_RULES = {
-  "01": { include: true, note: "Regular hours" },
-  "21": { include: true, note: "Overtime hours" },
-  "14": { include: false, flag: "H", note: "Hazard pay differential — flags the matching worked-hours row with H instead of adding separate hours" },
-  "66": { include: false, note: "Administrative leave — not incident work, excluded entirely (no flag)" },
-};
+function loadJobcodeRules(employeeKey) {
+  const emp = getEmployee(employeeKey);
+  return emp ? { ...emp.jobcode_rules } : {};
+}
 
-function loadJobcodeRules() {
-  try {
-    return JSON.parse(localStorage.getItem(JOBCODE_RULES_KEY) || "{}");
-  } catch {
-    return {};
+function saveJobcodeRules(employeeKey, rules) {
+  updateEmployee(employeeKey, { jobcode_rules: rules });
+  renderRulesView(employeeKey);
+}
+
+function loadTransCodeRules(employeeKey) {
+  const emp = getEmployee(employeeKey);
+  return emp && emp.trans_code_rules ? { ...emp.trans_code_rules } : { ...DEFAULT_TRANS_RULES };
+}
+
+function saveTransCodeRules(employeeKey, rules) {
+  updateEmployee(employeeKey, { trans_code_rules: rules });
+  renderRulesView(employeeKey);
+}
+
+function renderRulesView(employeeKey) {
+  if (!employeeKey) {
+    jobcodeRulesView.textContent = "(upload a paystub to see an employee's saved rules)";
+    transCodeRulesView.textContent = "";
+    return;
   }
-}
-
-function saveJobcodeRules(rules) {
-  localStorage.setItem(JOBCODE_RULES_KEY, JSON.stringify(rules));
-  renderRulesView();
-}
-
-function loadTransCodeRules() {
-  try {
-    const raw = localStorage.getItem(TRANS_CODE_RULES_KEY);
-    if (raw === null) {
-      saveTransCodeRules(DEFAULT_TRANS_RULES);
-      return { ...DEFAULT_TRANS_RULES };
-    }
-    return JSON.parse(raw);
-  } catch {
-    return { ...DEFAULT_TRANS_RULES };
-  }
-}
-
-function saveTransCodeRules(rules) {
-  localStorage.setItem(TRANS_CODE_RULES_KEY, JSON.stringify(rules));
-  renderRulesView();
-}
-
-function renderRulesView() {
-  jobcodeRulesView.textContent = JSON.stringify(loadJobcodeRules(), null, 2) || "(none yet)";
-  transCodeRulesView.textContent = JSON.stringify(loadTransCodeRules(), null, 2);
+  jobcodeRulesView.textContent = JSON.stringify(loadJobcodeRules(employeeKey), null, 2) || "(none yet)";
+  transCodeRulesView.textContent = JSON.stringify(loadTransCodeRules(employeeKey), null, 2);
 }
 
 resetRulesBtn.addEventListener("click", () => {
-  if (!confirm("Reset all your saved incident/trans-code rules? This can't be undone.")) return;
-  localStorage.removeItem(JOBCODE_RULES_KEY);
-  localStorage.removeItem(TRANS_CODE_RULES_KEY);
-  loadTransCodeRules(); // re-seeds defaults
-  renderRulesView();
+  if (!currentEmployeeKey) return;
+  if (!confirm(`Reset all saved incident/trans-code rules for ${currentEmployeeKey}? This can't be undone.`)) return;
+  updateEmployee(currentEmployeeKey, { jobcode_rules: {}, trans_code_rules: { ...DEFAULT_TRANS_RULES } });
+  renderRulesView(currentEmployeeKey);
 });
 
 // --- Drag & drop ----------------------------------------------------------
@@ -164,10 +199,10 @@ dropZone.addEventListener("drop", (e) => {
 // --- Pyodide boot ----------------------------------------------------------
 
 let pyodide;
+let currentEmployeeKey = null;
 
 async function boot() {
-  loadProfileIntoForm();
-  renderRulesView();
+  renderRulesView(null);
   try {
     setStatus("Downloading Python runtime (Pyodide)…");
     pyodide = await loadPyodide();
@@ -205,6 +240,23 @@ if "/" not in sys.path:
 
 // --- Conversion --------------------------------------------------------
 
+async function detectEmployeeName() {
+  const nameJson = await pyodide.runPythonAsync(`
+import json, traceback
+def _run():
+    import pdfminer_words, paycheck8_parser
+    words = pdfminer_words.extract_words("/paystub.pdf")
+    stub, _ = paycheck8_parser.parse_from_words(words)
+    return {"ok": True, "name": stub.employee_name}
+try:
+    result = _run()
+except Exception:
+    result = {"ok": False, "error": traceback.format_exc()}
+json.dumps(result)
+`);
+  return JSON.parse(nameJson);
+}
+
 async function convert() {
   const file = fileInput.files[0];
   if (!file) {
@@ -220,10 +272,41 @@ async function convert() {
     const bytes = new Uint8Array(await file.arrayBuffer());
     pyodide.FS.writeFile("/paystub.pdf", bytes);
 
-    const profile = readProfileFromForm();
+    setStatus("Detecting employee…");
+    const detected = await detectEmployeeName();
+    if (!detected.ok) {
+      setStatus("Could not read this paystub:\n" + detected.error, true);
+      return;
+    }
+
+    const detectedKey = normalizeEmployeeKey(detected.name);
+    const switchingEmployee = detectedKey !== currentEmployeeKey;
+    currentEmployeeKey = detectedKey;
+    const isNewEmployee = getEmployee(currentEmployeeKey) === null;
+    ensureEmployee(currentEmployeeKey, detected.name);
+    // Only reload the form from storage when switching to a different
+    // employee than last time — otherwise this clobbers profile fields the
+    // user just typed in (e.g. filling in a brand-new employee's info and
+    // clicking Convert again to proceed) with the still-blank saved copy.
+    if (switchingEmployee) {
+      loadProfileIntoForm(currentEmployeeKey);
+    }
+    renderRulesView(currentEmployeeKey);
+    employeeBanner.textContent = `Employee: ${detected.name}`;
+    employeeBanner.style.display = "block";
+
+    const profile = readProfileFromForm(currentEmployeeKey);
+    if (isNewEmployee || !profileLooksComplete(profile)) {
+      setStatus(
+        `New/incomplete profile for ${detected.name}. Fill in their info above ` +
+        `(at least Hired At and Hiring Unit Name), then click Convert again.`
+      );
+      return;
+    }
+
     pyodide.FS.writeFile("/profile.json", new TextEncoder().encode(JSON.stringify(profile)));
-    pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules())));
-    pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules())));
+    pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules(currentEmployeeKey))));
+    pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules(currentEmployeeKey))));
 
     setStatus("Parsing paystub…");
     const resultJson = await pyodide.runPythonAsync(`
@@ -266,7 +349,7 @@ def _run():
     for name, g in groups.items():
         total = sum(e["hours"] for e in g["dates"].values())
         summary_lines.append(
-            f"  {name} (accounting code {g['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)"
+            f"  {name} (accounting code {g['meta']['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)"
         )
     summary_lines.append(f"Total hours (all columns): {grand_total:g}")
 
@@ -338,9 +421,22 @@ function showResolvePanel(info) {
   }
 }
 
+const INCIDENT_FIELDS = [
+  ["rf_incident_name", "incident_name", "Incident name", "e.g. Aspen Acres"],
+  ["rf_order_number", "incident_order_number", "Incident order number", "e.g. CO-CUX-1160"],
+  ["rf_fire_code", "fire_code", "Fire code", "e.g. SSB5"],
+  ["rf_resource_request", "resource_request_number", "Resource request number", "e.g. O-33"],
+  ["rf_position_code", "position_code", "Position code", "e.g. FFT1"],
+  ["rf_acct", "accounting_code", "Accounting code", "e.g. 1542"],
+];
+
 function renderJobcodeResolveForm(info) {
-  const jobcodeRules = loadJobcodeRules();
-  const existingGroups = [...new Set(Object.values(jobcodeRules).map((r) => r.group).filter(Boolean))];
+  const jobcodeRules = loadJobcodeRules(currentEmployeeKey);
+  const existingByName = {};
+  for (const rule of Object.values(jobcodeRules)) {
+    if (rule.incident_name) existingByName[rule.incident_name] = rule;
+  }
+  const existingNames = Object.keys(existingByName);
 
   resolvePanel.innerHTML = `
     <h3>New jobcode found: ${info.jobcode}</h3>
@@ -348,15 +444,17 @@ function renderJobcodeResolveForm(info) {
 Trans code: ${info.trans_code}
 Hours found on:
 ${formatHoursByDate(info.hours_by_date)}</div>
-    <p class="hint">What incident does this belong to? (If it's the same incident as one you already named, type that exact name again — the accounting code will fill in for you.)</p>
+    <p class="hint">What incident is this for ${currentEmployeeKey}? (Type an incident name you've
+    already used and the rest fills in automatically.) None of this is guessable from the paystub —
+    it comes from the resource order.</p>
     <div class="row">
-      <label>Incident name
-        <input id="rf_group" list="rf_group_list" placeholder="e.g. Aspen Acres">
-        <datalist id="rf_group_list">${existingGroups.map((g) => `<option value="${g}">`).join("")}</datalist>
-      </label>
-      <label>Accounting code
-        <input id="rf_acct" placeholder="e.g. 1542">
-      </label>
+      ${INCIDENT_FIELDS.map(([id, , label, placeholder]) => `
+        <label>${label}
+          ${id === "rf_incident_name"
+            ? `<input id="${id}" list="rf_incident_list" placeholder="${placeholder}">
+               <datalist id="rf_incident_list">${existingNames.map((n) => `<option value="${n}">`).join("")}</datalist>`
+            : `<input id="${id}" placeholder="${placeholder}">`}
+        </label>`).join("")}
     </div>
     <div class="actions">
       <button id="rf_save">Save & continue</button>
@@ -364,29 +462,33 @@ ${formatHoursByDate(info.hours_by_date)}</div>
     </div>
   `;
 
-  const groupInput = document.getElementById("rf_group");
-  const acctInput = document.getElementById("rf_acct");
-  groupInput.addEventListener("input", () => {
-    const match = Object.values(jobcodeRules).find((r) => r.group === groupInput.value);
-    if (match) acctInput.value = match.accounting_code;
+  const nameInput = document.getElementById("rf_incident_name");
+  nameInput.addEventListener("input", () => {
+    const match = existingByName[nameInput.value];
+    if (!match) return;
+    for (const [id, key] of INCIDENT_FIELDS) {
+      if (key !== "incident_name") document.getElementById(id).value = match[key] || "";
+    }
   });
 
   document.getElementById("rf_save").addEventListener("click", () => {
-    const group = groupInput.value.trim();
-    const acct = acctInput.value.trim();
-    if (!group || !acct) {
-      alert("Please fill in both the incident name and accounting code.");
+    const values = {};
+    for (const [id, key] of INCIDENT_FIELDS) {
+      values[key] = document.getElementById(id).value.trim();
+    }
+    if (!values.incident_name || !values.accounting_code) {
+      alert("Please fill in at least the incident name and accounting code.");
       return;
     }
-    jobcodeRules[info.jobcode] = { include: true, group, accounting_code: acct };
-    saveJobcodeRules(jobcodeRules);
+    jobcodeRules[info.jobcode] = { include: true, group: values.incident_name, ...values };
+    saveJobcodeRules(currentEmployeeKey, jobcodeRules);
     resolvePanel.style.display = "none";
     convert();
   });
 
   document.getElementById("rf_exclude").addEventListener("click", () => {
     jobcodeRules[info.jobcode] = { include: false, note: "Excluded via web UI — not incident time." };
-    saveJobcodeRules(jobcodeRules);
+    saveJobcodeRules(currentEmployeeKey, jobcodeRules);
     resolvePanel.style.display = "none";
     convert();
   });
@@ -417,7 +519,7 @@ ${formatHoursByDate(info.hours_by_date)}</div>
 
   document.getElementById("rf_save").addEventListener("click", () => {
     const treatment = document.getElementById("rf_treatment").value;
-    const transRules = loadTransCodeRules();
+    const transRules = loadTransCodeRules(currentEmployeeKey);
     if (treatment === "include") {
       transRules[info.trans_code] = { include: true, note: "Added via web UI" };
     } else if (treatment === "exclude") {
@@ -426,7 +528,7 @@ ${formatHoursByDate(info.hours_by_date)}</div>
       const flag = treatment.split("_")[1];
       transRules[info.trans_code] = { include: false, flag, note: "Added via web UI" };
     }
-    saveTransCodeRules(transRules);
+    saveTransCodeRules(currentEmployeeKey, transRules);
     resolvePanel.style.display = "none";
     convert();
   });

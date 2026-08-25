@@ -56,6 +56,11 @@
 
   .hint { color: #55604f; font-size: 0.9rem; }
 
+  #employeeBanner {
+    margin-top: 1rem; padding: 0.5rem 0.9rem; background: var(--fs-green);
+    color: white; border-radius: 6px; font-weight: 600;
+  }
+
   fieldset {
     margin-top: 1.25rem; border: 1px solid var(--fs-border); border-radius: 8px; background: white;
   }
@@ -112,10 +117,13 @@
   </header>
 
   <main>
-    <p class="hint">Runs entirely in your browser — the paystub PDF never leaves your machine.</p>
+    <p class="hint">Runs entirely in your browser — the paystub PDF never leaves your machine.
+      Handles multiple employees: upload a paystub and it detects who it belongs to automatically.</p>
+
+    <div id="employeeBanner" style="display:none"></div>
 
     <fieldset id="profileFields">
-      <legend>Your info (saved only in this browser, never uploaded anywhere)</legend>
+      <legend>Employee info (saved only in this browser, never uploaded anywhere)</legend>
       <div class="row">
         <label>Hired At <input id="p_hired_at" placeholder="e.g. CO-PSF"></label>
         <label>Employee Common Identifier <input id="p_eci"></label>
