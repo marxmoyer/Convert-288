@@ -11,16 +11,16 @@ silently guessing, since this is payroll-adjacent data.
 import json
 
 from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, RectangleObject
 
 TYPE_OF_EMPLOYMENT_EXPORT_VALUES = {"Casual": "1", "Federal": "0", "Other": "2"}
 
-# The template's text fields default to a 5.5-6.8pt Tahoma appearance. The
-# daily-grid cells (Mo/Day/Start/Stop/Hours) sit in boxes only 5.5pt tall;
-# 6.0pt is the largest tested size that doesn't clip digit tops there (6.5pt
-# starts clipping). The header/label fields (name, hiring unit, accounting
-# code, etc.) have taller boxes (~7.6pt+) with room to spare.
+# The template's text fields default to a 5.5-6.8pt Tahoma appearance.
+# Grid cells (Mo/Day/Start/Stop/Hours) get their boxes stretched by
+# GRID_ROW_PAD (see _enlarge_grid_rects) to make room for a bigger font
+# than the original tight 5.5pt box allowed.
 FONT_NAME = "/Tahoma"
-GRID_FONT_SIZE = 6.0
+GRID_FONT_SIZE = 9.0
 TOTALS_FONT_SIZE = 6.5  # Year / Total Hours boxes are only 6.8pt tall
 HEADER_FONT_SIZE = 7.5
 
@@ -137,7 +137,7 @@ def allocate_rows(paystub, groups):
     boundaries in practice; if they don't divide evenly, that's surfaced as
     an error rather than guessed at.
 
-    Returns {group_name: [(date, start, stop, hours_display_str), ...]}
+    Returns {group_name: [(date, start, stop, hours_float, flag_suffix), ...]}
     """
     group_order = list(groups.keys())  # first-seen order from build_groups
     rows_by_group = {name: [] for name in groups}
@@ -184,7 +184,7 @@ def allocate_rows(paystub, groups):
 
             flag_suffix = "".join(sorted(entry["flags"]))
             for start, stop, hours in merged:
-                rows_by_group[name].append((d, start, stop, f"{hours:g}{flag_suffix}"))
+                rows_by_group[name].append((d, start, stop, hours, flag_suffix))
 
     return rows_by_group
 
@@ -209,6 +209,43 @@ def _plan_column_assignments(groups, rows_by_group, grid_len):
                 "rows": chunk,
             })
     return assignments
+
+
+GRID_ROW_PAD = 3.0  # pt added above and below each grid cell's original box
+
+
+def _full_annotation_name(obj):
+    parts = []
+    name = obj.get("/T")
+    if name:
+        parts.insert(0, str(name))
+    p = obj.get("/Parent")
+    while p is not None:
+        pobj = p.get_object()
+        pt = pobj.get("/T")
+        if pt:
+            parts.insert(0, str(pt))
+        p = pobj.get("/Parent")
+    return ".".join(parts)
+
+
+def _enlarge_grid_rects(writer, field_map):
+    """The grid cells (Mo/Day/Start/Stop/Hours) are only 5.5pt tall boxes,
+    but rows are spaced ~12.7pt apart, so most of that height is unused
+    whitespace between rows. Stretch each cell's box into that margin so a
+    bigger font fits without clipping.
+    """
+    grid_field_names = set()
+    for col in COLUMN_LETTERS:
+        for row in field_map["columns"][col]["grid"]:
+            grid_field_names.update(row.values())
+
+    for annot in writer.pages[0]["/Annots"]:
+        obj = annot.get_object()
+        if _full_annotation_name(obj) not in grid_field_names:
+            continue
+        x0, y0, x1, y1 = (float(v) for v in obj["/Rect"])
+        obj[NameObject("/Rect")] = RectangleObject((x0, y0 - GRID_ROW_PAD, x1, y1 + GRID_ROW_PAD))
 
 
 def _fill_one_page(paystub, profile, field_map, page_assignments, template_path):
@@ -238,13 +275,16 @@ def _fill_one_page(paystub, profile, field_map, page_assignments, template_path)
             checkboxes[col] = first_col_on_page[group_name]
 
         col_total = 0.0
-        for field_row, (d, start, stop, hours_str) in zip(grid, assignment["rows"]):
+        for field_row, (d, start, stop, hours, flag_suffix) in zip(grid, assignment["rows"]):
+            # flag goes on the left (e.g. "H  6.5"), clearly separated from
+            # the number rather than butted up against it
+            hours_str = f"{flag_suffix}  {hours:g}" if flag_suffix else f"{hours:g}"
             values[field_row["mo"]] = _t(str(d.month), GRID_FONT_SIZE)
             values[field_row["day"]] = _t(str(d.day), GRID_FONT_SIZE)
             values[field_row["start"]] = _t(start, GRID_FONT_SIZE)
             values[field_row["stop"]] = _t(stop, GRID_FONT_SIZE)
             values[field_row["hours"]] = _t(hours_str, GRID_FONT_SIZE)
-            col_total += float(hours_str.rstrip("HET"))
+            col_total += hours
 
         values[col_map["16_year"]] = _t(str(paystub.year), TOTALS_FONT_SIZE)
         values[col_map["16_total_hours"]] = _t(f"{col_total:g}", TOTALS_FONT_SIZE)
@@ -262,6 +302,7 @@ def _fill_one_page(paystub, profile, field_map, page_assignments, template_path)
     reader = PdfReader(template_path)
     writer = PdfWriter()
     writer.append(reader)
+    _enlarge_grid_rects(writer, field_map)
     writer.update_page_form_field_values(writer.pages[0], values, auto_regenerate=False)
 
     return writer, page_total
