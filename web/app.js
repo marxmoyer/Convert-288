@@ -97,11 +97,11 @@ function updateEmployee(key, patch) {
 
 const PROFILE_FIELDS = {
   p_hired_at: "1_hired_at",
-  p_eci: "2_employee_common_identifier",
+  p_eci: "2_employee_common_identifier", // hidden input; IBG says leave blank for regular employees anyway
   p_type: "3_type_of_employment",
   p_unit_name: "4_hiring_unit_name",
   p_phone: "6_hiring_unit_phone",
-  p_fax: "7_hiring_unit_fax",
+  // Hiring Unit Fax dropped from the UI entirely — never used, always blank on output
 };
 
 function loadProfileIntoForm(employeeKey) {

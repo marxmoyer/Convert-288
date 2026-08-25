@@ -15,3 +15,7 @@ testoutput/
 *.xlsx
 USDA FS Paycheck8*.pdf
 exsamples/
+paystubs !notpublic!/
+
+# Editor/office lock files
+.~lock.*#

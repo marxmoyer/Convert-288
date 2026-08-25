@@ -27,10 +27,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("paystub_pdf")
     ap.add_argument("-o", "--out", default=None)
+    ap.add_argument("--jobcode-rules", default=JOBCODE_RULES)
     args = ap.parse_args()
 
     paystub, _ = paycheck8_parser.parse(args.paystub_pdf)
-    jobcode_rules = _load_rules(JOBCODE_RULES)
+    jobcode_rules = _load_rules(args.jobcode_rules)
     trans_code_rules = _load_rules(TRANS_CODE_RULES)
 
     try:
