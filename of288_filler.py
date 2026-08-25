@@ -15,12 +15,12 @@ from pypdf import PdfReader, PdfWriter
 TYPE_OF_EMPLOYMENT_EXPORT_VALUES = {"Casual": "1", "Federal": "0", "Other": "2"}
 
 # The template's text fields default to a 5.5-6.8pt Tahoma appearance. The
-# daily-grid cells (Mo/Day/Start/Stop/Hours) sit in boxes only 5.5pt tall,
-# so their original 5.5pt size is already the largest that fits without
-# clipping the tops of digits. The header/label fields (name, hiring unit,
-# accounting code, etc.) have taller boxes (~7.6pt+) with room to spare.
+# daily-grid cells (Mo/Day/Start/Stop/Hours) sit in boxes only 5.5pt tall;
+# 6.0pt is the largest tested size that doesn't clip digit tops there (6.5pt
+# starts clipping). The header/label fields (name, hiring unit, accounting
+# code, etc.) have taller boxes (~7.6pt+) with room to spare.
 FONT_NAME = "/Tahoma"
-GRID_FONT_SIZE = 5.5
+GRID_FONT_SIZE = 6.0
 TOTALS_FONT_SIZE = 6.5  # Year / Total Hours boxes are only 6.8pt tall
 HEADER_FONT_SIZE = 7.5
 
@@ -30,7 +30,17 @@ def _t(text, size=HEADER_FONT_SIZE):
 
 
 class UnrecognizedCodeError(ValueError):
-    pass
+    """Carries structured info (not just a message) so a caller — like the
+    browser UI — can build a form around exactly what's unrecognized,
+    instead of parsing an error string.
+    """
+    def __init__(self, message, *, kind, jobcode, override, trans_code, hours_by_date):
+        super().__init__(message)
+        self.kind = kind  # "jobcode" or "trans_code"
+        self.jobcode = jobcode
+        self.override = override
+        self.trans_code = trans_code
+        self.hours_by_date = hours_by_date  # {date: hours} for context
 
 
 class ScheduleAllocationError(ValueError):
@@ -65,7 +75,9 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
         if job_cfg is None:
             raise UnrecognizedCodeError(
                 f"Unrecognized jobcode '{line.jobcode}' (override {line.override}, "
-                f"trans {line.trans_code}). Add it to jobcode_rules.json before converting."
+                f"trans {line.trans_code}). Add it to jobcode_rules.json before converting.",
+                kind="jobcode", jobcode=line.jobcode, override=line.override,
+                trans_code=line.trans_code, hours_by_date=line.hours_by_date,
             )
 
         override = job_cfg.get("trans_overrides", {}).get(line.trans_code)
@@ -80,7 +92,9 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
             if trans_cfg is None:
                 raise UnrecognizedCodeError(
                     f"Unrecognized trans code '{line.trans_code}' on jobcode '{line.jobcode}'. "
-                    f"Add it to trans_code_rules.json before converting."
+                    f"Add it to trans_code_rules.json before converting.",
+                    kind="trans_code", jobcode=line.jobcode, override=line.override,
+                    trans_code=line.trans_code, hours_by_date=line.hours_by_date,
                 )
             group_name = job_cfg["group"]
             accounting_code = job_cfg["accounting_code"]

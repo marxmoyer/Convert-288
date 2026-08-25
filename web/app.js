@@ -2,8 +2,14 @@ import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyod
 
 const statusEl = document.getElementById("status");
 const fileInput = document.getElementById("fileInput");
+const dropZone = document.getElementById("dropZone");
+const dropFilename = document.getElementById("dropFilename");
 const convertBtn = document.getElementById("convertBtn");
 const downloadsEl = document.getElementById("downloads");
+const resolvePanel = document.getElementById("resolvePanel");
+const jobcodeRulesView = document.getElementById("jobcodeRulesView");
+const transCodeRulesView = document.getElementById("transCodeRulesView");
+const resetRulesBtn = document.getElementById("resetRulesBtn");
 
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
@@ -12,18 +18,19 @@ function setStatus(text, isError = false) {
 
 // Assets shared with the desktop CLI live one directory up; pdfminer_words.py
 // is browser-only (replaces pdfplumber, which can't install under Pyodide).
-// profile.json is NOT fetched — it holds personal info, so it's collected
-// from the form below (saved to localStorage, never uploaded anywhere) and
-// written into the Pyodide filesystem fresh on every conversion instead.
+// profile.json / jobcode_rules.json / trans_code_rules.json are NOT fetched
+// from the repo — they're personal to each user, kept in this browser's
+// localStorage only, and written into the Pyodide filesystem fresh before
+// every conversion.
 const SHARED_ASSETS = [
   "../paycheck8_parser.py",
   "../of288_filler.py",
   "../field_map.json",
-  "../jobcode_rules.json",
-  "../trans_code_rules.json",
   "../OF288-Fillable.pdf",
 ];
 const LOCAL_ASSETS = ["pdfminer_words.py"];
+
+// --- Profile (name/hiring-unit fields) ---------------------------------
 
 const PROFILE_STORAGE_KEY = "of288_profile_v1";
 const PROFILE_FIELDS = {
@@ -57,16 +64,110 @@ function readProfileFromForm() {
   try {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
   } catch {
-    // localStorage unavailable (private mode, quota, etc.) — non-fatal,
-    // conversion still works, it just won't be remembered next visit
+    // localStorage unavailable (private mode, quota, etc.) — non-fatal
   }
   return profile;
 }
+
+// --- Jobcode / trans-code rules (per-browser, editable) -----------------
+
+const JOBCODE_RULES_KEY = "of288_jobcode_rules_v1";
+const TRANS_CODE_RULES_KEY = "of288_trans_code_rules_v1";
+
+// Trans codes 01/21/14/66 look like agency-standard Paycheck8 definitions
+// rather than anything personal, so every new user starts with these
+// pre-filled — editable/removable like anything else in localStorage.
+const DEFAULT_TRANS_RULES = {
+  "01": { include: true, note: "Regular hours" },
+  "21": { include: true, note: "Overtime hours" },
+  "14": { include: false, flag: "H", note: "Hazard pay differential — flags the matching worked-hours row with H instead of adding separate hours" },
+  "66": { include: false, note: "Administrative leave — not incident work, excluded entirely (no flag)" },
+};
+
+function loadJobcodeRules() {
+  try {
+    return JSON.parse(localStorage.getItem(JOBCODE_RULES_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveJobcodeRules(rules) {
+  localStorage.setItem(JOBCODE_RULES_KEY, JSON.stringify(rules));
+  renderRulesView();
+}
+
+function loadTransCodeRules() {
+  try {
+    const raw = localStorage.getItem(TRANS_CODE_RULES_KEY);
+    if (raw === null) {
+      saveTransCodeRules(DEFAULT_TRANS_RULES);
+      return { ...DEFAULT_TRANS_RULES };
+    }
+    return JSON.parse(raw);
+  } catch {
+    return { ...DEFAULT_TRANS_RULES };
+  }
+}
+
+function saveTransCodeRules(rules) {
+  localStorage.setItem(TRANS_CODE_RULES_KEY, JSON.stringify(rules));
+  renderRulesView();
+}
+
+function renderRulesView() {
+  jobcodeRulesView.textContent = JSON.stringify(loadJobcodeRules(), null, 2) || "(none yet)";
+  transCodeRulesView.textContent = JSON.stringify(loadTransCodeRules(), null, 2);
+}
+
+resetRulesBtn.addEventListener("click", () => {
+  if (!confirm("Reset all your saved incident/trans-code rules? This can't be undone.")) return;
+  localStorage.removeItem(JOBCODE_RULES_KEY);
+  localStorage.removeItem(TRANS_CODE_RULES_KEY);
+  loadTransCodeRules(); // re-seeds defaults
+  renderRulesView();
+});
+
+// --- Drag & drop ----------------------------------------------------------
+
+function setSelectedFile(file) {
+  if (!file) return;
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  fileInput.files = dt.files;
+  dropFilename.textContent = file.name;
+}
+
+fileInput.addEventListener("change", () => setSelectedFile(fileInput.files[0]));
+
+["dragenter", "dragover"].forEach((evt) =>
+  dropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropZone.classList.add("dragover");
+  })
+);
+["dragleave", "drop"].forEach((evt) =>
+  dropZone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropZone.classList.remove("dragover");
+  })
+);
+dropZone.addEventListener("drop", (e) => {
+  const file = e.dataTransfer.files[0];
+  if (file && file.type === "application/pdf") {
+    setSelectedFile(file);
+  } else {
+    setStatus("Please drop a PDF file.", true);
+  }
+});
+
+// --- Pyodide boot ----------------------------------------------------------
 
 let pyodide;
 
 async function boot() {
   loadProfileIntoForm();
+  renderRulesView();
   try {
     setStatus("Downloading Python runtime (Pyodide)…");
     pyodide = await loadPyodide();
@@ -102,6 +203,8 @@ if "/" not in sys.path:
   }
 }
 
+// --- Conversion --------------------------------------------------------
+
 async function convert() {
   const file = fileInput.files[0];
   if (!file) {
@@ -109,6 +212,7 @@ async function convert() {
     return;
   }
 
+  resolvePanel.style.display = "none";
   downloadsEl.innerHTML = "";
   convertBtn.disabled = true;
   try {
@@ -118,6 +222,8 @@ async function convert() {
 
     const profile = readProfileFromForm();
     pyodide.FS.writeFile("/profile.json", new TextEncoder().encode(JSON.stringify(profile)));
+    pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules())));
+    pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules())));
 
     setStatus("Parsing paystub…");
     const resultJson = await pyodide.runPythonAsync(`
@@ -126,21 +232,25 @@ import json, traceback
 def _run():
     import pdfminer_words, paycheck8_parser, of288_filler
 
-    def load_rules(path):
-        data = json.load(open(path))
-        data.pop("_comment", None)
-        return data
-
     words = pdfminer_words.extract_words("/paystub.pdf")
     stub, _ = paycheck8_parser.parse_from_words(words)
 
-    jobcode_rules = load_rules("/jobcode_rules.json")
-    trans_code_rules = load_rules("/trans_code_rules.json")
+    jobcode_rules = json.load(open("/jobcode_rules.json"))
+    trans_code_rules = json.load(open("/trans_code_rules.json"))
 
     try:
         groups = of288_filler.build_groups(stub, jobcode_rules, trans_code_rules)
     except of288_filler.UnrecognizedCodeError as e:
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "unrecognized": {
+                "kind": e.kind,
+                "jobcode": e.jobcode,
+                "override": e.override,
+                "trans_code": e.trans_code,
+                "hours_by_date": {d.isoformat(): h for d, h in e.hours_by_date.items()},
+            },
+        }
 
     try:
         out_paths, used_columns, grand_total = of288_filler.fill(
@@ -177,6 +287,12 @@ json.dumps(result)
 `);
 
     const result = JSON.parse(resultJson);
+
+    if (!result.ok && result.unrecognized) {
+      setStatus("Needs your input before this can finish converting — see below.");
+      showResolvePanel(result.unrecognized);
+      return;
+    }
     if (!result.ok) {
       setStatus("Cannot convert:\n" + result.error, true);
       return;
@@ -200,6 +316,120 @@ json.dumps(result)
   } finally {
     convertBtn.disabled = false;
   }
+}
+
+// --- Resolution panel for unrecognized jobcodes/trans codes -------------
+
+function formatHoursByDate(hoursByDate) {
+  return Object.entries(hoursByDate)
+    .sort(([a], [b]) => (a < b ? -1 : 1))
+    .map(([d, h]) => `  ${d}: ${h}h`)
+    .join("\n");
+}
+
+function showResolvePanel(info) {
+  resolvePanel.innerHTML = "";
+  resolvePanel.style.display = "block";
+
+  if (info.kind === "jobcode") {
+    renderJobcodeResolveForm(info);
+  } else {
+    renderTransCodeResolveForm(info);
+  }
+}
+
+function renderJobcodeResolveForm(info) {
+  const jobcodeRules = loadJobcodeRules();
+  const existingGroups = [...new Set(Object.values(jobcodeRules).map((r) => r.group).filter(Boolean))];
+
+  resolvePanel.innerHTML = `
+    <h3>New jobcode found: ${info.jobcode}</h3>
+    <div class="details">Override/accounting code on paystub: ${info.override}
+Trans code: ${info.trans_code}
+Hours found on:
+${formatHoursByDate(info.hours_by_date)}</div>
+    <p class="hint">What incident does this belong to? (If it's the same incident as one you already named, type that exact name again — the accounting code will fill in for you.)</p>
+    <div class="row">
+      <label>Incident name
+        <input id="rf_group" list="rf_group_list" placeholder="e.g. Aspen Acres">
+        <datalist id="rf_group_list">${existingGroups.map((g) => `<option value="${g}">`).join("")}</datalist>
+      </label>
+      <label>Accounting code
+        <input id="rf_acct" placeholder="e.g. 1542">
+      </label>
+    </div>
+    <div class="actions">
+      <button id="rf_save">Save & continue</button>
+      <button id="rf_exclude" class="secondary">This isn't incident time — exclude it</button>
+    </div>
+  `;
+
+  const groupInput = document.getElementById("rf_group");
+  const acctInput = document.getElementById("rf_acct");
+  groupInput.addEventListener("input", () => {
+    const match = Object.values(jobcodeRules).find((r) => r.group === groupInput.value);
+    if (match) acctInput.value = match.accounting_code;
+  });
+
+  document.getElementById("rf_save").addEventListener("click", () => {
+    const group = groupInput.value.trim();
+    const acct = acctInput.value.trim();
+    if (!group || !acct) {
+      alert("Please fill in both the incident name and accounting code.");
+      return;
+    }
+    jobcodeRules[info.jobcode] = { include: true, group, accounting_code: acct };
+    saveJobcodeRules(jobcodeRules);
+    resolvePanel.style.display = "none";
+    convert();
+  });
+
+  document.getElementById("rf_exclude").addEventListener("click", () => {
+    jobcodeRules[info.jobcode] = { include: false, note: "Excluded via web UI — not incident time." };
+    saveJobcodeRules(jobcodeRules);
+    resolvePanel.style.display = "none";
+    convert();
+  });
+}
+
+function renderTransCodeResolveForm(info) {
+  resolvePanel.innerHTML = `
+    <h3>New trans code found: ${info.trans_code}</h3>
+    <div class="details">Seen on jobcode: ${info.jobcode} (override ${info.override})
+Hours found on:
+${formatHoursByDate(info.hours_by_date)}</div>
+    <p class="hint">How should this trans code's hours be treated?</p>
+    <div class="row">
+      <label>Treatment
+        <select id="rf_treatment">
+          <option value="include">Include as worked hours</option>
+          <option value="flag_H">Exclude, but flag the matching hours as H (hazard pay)</option>
+          <option value="flag_T">Exclude, but flag the matching hours as T (travel)</option>
+          <option value="flag_E">Exclude, but flag the matching hours as E (environmental differential)</option>
+          <option value="exclude">Exclude entirely — not incident time</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="rf_save">Save & continue</button>
+    </div>
+  `;
+
+  document.getElementById("rf_save").addEventListener("click", () => {
+    const treatment = document.getElementById("rf_treatment").value;
+    const transRules = loadTransCodeRules();
+    if (treatment === "include") {
+      transRules[info.trans_code] = { include: true, note: "Added via web UI" };
+    } else if (treatment === "exclude") {
+      transRules[info.trans_code] = { include: false, note: "Added via web UI" };
+    } else {
+      const flag = treatment.split("_")[1];
+      transRules[info.trans_code] = { include: false, flag, note: "Added via web UI" };
+    }
+    saveTransCodeRules(transRules);
+    resolvePanel.style.display = "none";
+    convert();
+  });
 }
 
 convertBtn.addEventListener("click", convert);

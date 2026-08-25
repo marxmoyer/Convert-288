@@ -2,58 +2,163 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Paystub → OF-288 Converter</title>
+<title>Convert-288</title>
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-  h1 { font-size: 1.4rem; }
+  :root {
+    --fs-green-dark: #1b3a2b;
+    --fs-green: #2f5d3f;
+    --fs-green-light: #4a7a5a;
+    --fs-tan: #b08d57;
+    --fs-tan-light: #e8dcc4;
+    --fs-cream: #faf7f0;
+    --fs-text: #22281f;
+    --fs-border: #cfc7ac;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif; margin: 0; color: var(--fs-text);
+    background: var(--fs-cream);
+  }
+  header {
+    background: linear-gradient(135deg, var(--fs-green-dark), var(--fs-green));
+    color: white; padding: 1.25rem 1.5rem; display: flex; align-items: center; gap: 0.75rem;
+    border-bottom: 4px solid var(--fs-tan);
+  }
+  header .badge {
+    width: 2.5rem; height: 2.5rem; border-radius: 50%; background: var(--fs-tan);
+    display: flex; align-items: center; justify-content: center; font-size: 1.3rem; flex-shrink: 0;
+  }
+  header h1 { font-size: 1.5rem; margin: 0; letter-spacing: 0.02em; }
+  header p { margin: 0.1rem 0 0; font-size: 0.85rem; color: var(--fs-tan-light); }
+
+  main { max-width: 680px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
+
   #status { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.85rem;
-            background: #f4f4f4; border: 1px solid #ddd; border-radius: 6px; padding: 0.75rem;
+            background: white; border: 1px solid var(--fs-border); border-radius: 8px; padding: 0.85rem;
             min-height: 2rem; margin-top: 1rem; }
   #status.error { background: #fdeaea; border-color: #e0a0a0; color: #7a1f1f; }
-  #controls { display: flex; gap: 0.5rem; align-items: center; margin-top: 1rem; }
-  button { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; }
-  button:disabled { cursor: default; opacity: 0.5; }
+
+  #controls { display: flex; gap: 0.5rem; align-items: center; margin-top: 1rem; flex-wrap: wrap; }
+  button {
+    padding: 0.55rem 1.1rem; font-size: 1rem; cursor: pointer; border: none; border-radius: 6px;
+    background: var(--fs-green); color: white; font-weight: 600;
+  }
+  button:hover:not(:disabled) { background: var(--fs-green-dark); }
+  button:disabled { cursor: default; opacity: 0.45; }
+
   #downloads { margin-top: 1rem; }
-  #downloads a { display: inline-block; margin: 0.25rem 0.5rem 0.25rem 0; padding: 0.4rem 0.8rem;
-                 background: #2a6; color: white; text-decoration: none; border-radius: 4px; }
-  .hint { color: #666; font-size: 0.9rem; }
-  fieldset { margin-top: 1rem; border: 1px solid #ddd; border-radius: 6px; }
+  #downloads a {
+    display: inline-block; margin: 0.25rem 0.5rem 0.25rem 0; padding: 0.5rem 0.9rem;
+    background: var(--fs-tan); color: var(--fs-text); text-decoration: none; border-radius: 6px;
+    font-weight: 600;
+  }
+  #downloads a:hover { background: #9c7a48; }
+
+  .hint { color: #55604f; font-size: 0.9rem; }
+
+  fieldset {
+    margin-top: 1.25rem; border: 1px solid var(--fs-border); border-radius: 8px; background: white;
+  }
+  fieldset legend { padding: 0 0.4rem; font-weight: 600; color: var(--fs-green-dark); }
   fieldset .row { display: flex; gap: 0.75rem; margin: 0.5rem 0; flex-wrap: wrap; }
-  fieldset label { display: flex; flex-direction: column; font-size: 0.85rem; gap: 0.2rem; flex: 1 1 160px; }
-  fieldset input, fieldset select { padding: 0.3rem; font-size: 0.95rem; }
+  fieldset label { display: flex; flex-direction: column; font-size: 0.85rem; gap: 0.25rem; flex: 1 1 160px; }
+  fieldset input, fieldset select {
+    padding: 0.4rem; font-size: 0.95rem; border: 1px solid var(--fs-border); border-radius: 4px;
+  }
+  fieldset input:focus, fieldset select:focus { outline: 2px solid var(--fs-green-light); }
+
+  input[type="file"] {
+    border: 1px solid var(--fs-border); border-radius: 6px; padding: 0.4rem; background: white;
+  }
+
+  #dropZone {
+    border: 2px dashed var(--fs-border); border-radius: 10px; padding: 1.5rem; text-align: center;
+    background: white; color: #6b7566; transition: border-color 0.15s, background 0.15s;
+  }
+  #dropZone.dragover { border-color: var(--fs-green); background: #eef4ee; color: var(--fs-green-dark); }
+  #dropZone p { margin: 0.3rem 0; }
+  #dropZone .filename { font-weight: 600; color: var(--fs-text); }
+
+  #resolvePanel {
+    display: none; margin-top: 1rem; border: 1px solid var(--fs-tan); border-radius: 8px;
+    background: #fdf8ec; padding: 1rem;
+  }
+  #resolvePanel h3 { margin: 0 0 0.4rem; color: var(--fs-green-dark); }
+  #resolvePanel .details { font-family: ui-monospace, monospace; font-size: 0.82rem; background: white;
+    border: 1px solid var(--fs-border); border-radius: 6px; padding: 0.6rem; white-space: pre-wrap; }
+  #resolvePanel .row { display: flex; gap: 0.75rem; margin: 0.6rem 0; flex-wrap: wrap; align-items: flex-end; }
+  #resolvePanel label { display: flex; flex-direction: column; font-size: 0.85rem; gap: 0.25rem; flex: 1 1 160px; }
+  #resolvePanel input, #resolvePanel select {
+    padding: 0.4rem; font-size: 0.95rem; border: 1px solid var(--fs-border); border-radius: 4px;
+  }
+  #resolvePanel .actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; }
+  button.secondary { background: #8a7a5a; }
+  button.secondary:hover { background: #6f6248; }
+
+  details.rulesManager { margin-top: 1.5rem; }
+  details.rulesManager summary { cursor: pointer; color: var(--fs-green-dark); font-weight: 600; }
+  details.rulesManager pre { background: white; border: 1px solid var(--fs-border); border-radius: 6px;
+    padding: 0.6rem; font-size: 0.8rem; overflow-x: auto; }
+  details.rulesManager button { margin-top: 0.4rem; }
 </style>
 </head>
 <body>
-  <h1>Paystub → OF-288 Converter</h1>
-  <p class="hint">Runs entirely in your browser — the paystub PDF never leaves your machine.</p>
-
-  <fieldset id="profileFields">
-    <legend>Your info (saved only in this browser, never uploaded anywhere)</legend>
-    <div class="row">
-      <label>Hired At <input id="p_hired_at" placeholder="e.g. CO-PSF"></label>
-      <label>Employee Common Identifier <input id="p_eci"></label>
-      <label>Type of Employment
-        <select id="p_type">
-          <option value="Federal">Federal</option>
-          <option value="Casual">Casual</option>
-          <option value="Other">Other</option>
-        </select>
-      </label>
+  <header>
+    <div class="badge">🌲</div>
+    <div>
+      <h1>Convert-288</h1>
+      <p>Paystub → OF-288 Incident Time Report</p>
     </div>
-    <div class="row">
-      <label>Hiring Unit Name <input id="p_unit_name" placeholder="e.g. SAN CARLOS RANGER DISTRICT"></label>
-      <label>Hiring Unit Phone <input id="p_phone" placeholder="e.g. 719-260-8500"></label>
-      <label>Hiring Unit Fax <input id="p_fax"></label>
+  </header>
+
+  <main>
+    <p class="hint">Runs entirely in your browser — the paystub PDF never leaves your machine.</p>
+
+    <fieldset id="profileFields">
+      <legend>Your info (saved only in this browser, never uploaded anywhere)</legend>
+      <div class="row">
+        <label>Hired At <input id="p_hired_at" placeholder="e.g. CO-PSF"></label>
+        <label>Employee Common Identifier <input id="p_eci"></label>
+        <label>Type of Employment
+          <select id="p_type">
+            <option value="Federal">Federal</option>
+            <option value="Casual">Casual</option>
+            <option value="Other">Other</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Hiring Unit Name <input id="p_unit_name" placeholder="e.g. SAN CARLOS RANGER DISTRICT"></label>
+        <label>Hiring Unit Phone <input id="p_phone" placeholder="e.g. 719-260-8500"></label>
+        <label>Hiring Unit Fax <input id="p_fax"></label>
+      </div>
+    </fieldset>
+
+    <div id="dropZone">
+      <p>Drag & drop your paystub PDF here, or</p>
+      <input type="file" id="fileInput" accept="application/pdf" disabled>
+      <p class="filename" id="dropFilename"></p>
     </div>
-  </fieldset>
 
-  <div id="controls">
-    <input type="file" id="fileInput" accept="application/pdf" disabled>
-    <button id="convertBtn" disabled>Convert</button>
-  </div>
+    <div id="controls">
+      <button id="convertBtn" disabled>Convert</button>
+    </div>
 
-  <div id="downloads"></div>
-  <div id="status">Starting Python environment…</div>
+    <div id="resolvePanel"></div>
+
+    <div id="downloads"></div>
+    <div id="status">Starting Python environment…</div>
+
+    <details class="rulesManager">
+      <summary>Manage your saved rules</summary>
+      <p class="hint">These are stored only in this browser and control how your jobcodes/trans codes map onto the OF-288.</p>
+      <p><strong>Incident/jobcode rules</strong></p>
+      <pre id="jobcodeRulesView"></pre>
+      <p><strong>Trans code rules</strong></p>
+      <pre id="transCodeRulesView"></pre>
+      <button id="resetRulesBtn" class="secondary">Reset all my rules</button>
+    </details>
+  </main>
 
   <script type="module" src="app.js"></script>
 </body>
