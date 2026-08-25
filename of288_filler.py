@@ -9,6 +9,7 @@ line), or something else. Unrecognized codes raise an error rather than
 silently guessing, since this is payroll-adjacent data.
 """
 import json
+from itertools import permutations
 
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, RectangleObject
@@ -76,9 +77,18 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
     excluded, which depends on assignment dates the paystub doesn't carry,
     so it's a per-case override rather than a general rule.
 
-    Returns {group_name: {"meta": {...incident fields...}, "dates": {date: {"hours": float, "flags": set[str]}}}}
+    Also returns `reserved`: {date: [(key, hours), ...]} for excluded lines
+    (e.g. the always-excluded home-unit jobcode, or admin leave). These
+    still occupy real clock time that day even though they produce no
+    OF-288 row, which matters when allocate_rows has to figure out which
+    clock segment belongs to which group — an excluded block can sit
+    chronologically between two tracked ones.
+
+    Returns (groups, reserved) where
+    groups = {group_name: {"meta": {...incident fields...}, "dates": {date: {"hours": float, "flags": set[str]}}}}
     """
     groups = {}
+    reserved = {}
     for line in paystub.lines:
         job_cfg = jobcode_rules.get(line.jobcode)
         if job_cfg is None:
@@ -89,6 +99,10 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
                 trans_code=line.trans_code, hours_by_date=line.hours_by_date,
             )
 
+        def _reserve(key):
+            for d, hours in line.hours_by_date.items():
+                reserved.setdefault(d, []).append((key, hours))
+
         override = job_cfg.get("trans_overrides", {}).get(line.trans_code)
         if override is not None:
             trans_cfg = override
@@ -96,6 +110,7 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
             group_name = source_cfg.get("group")
         else:
             if not job_cfg["include"]:
+                _reserve(line.jobcode)
                 continue
             trans_cfg = trans_code_rules.get(line.trans_code)
             if trans_cfg is None:
@@ -112,6 +127,7 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
 
         flag = trans_cfg.get("flag")
         if not trans_cfg.get("include") and not flag:
+            _reserve(f"{line.jobcode}#{line.trans_code}")
             continue  # contributes nothing to the OF-288 (e.g. admin leave)
 
         group = groups.setdefault(group_name, {"meta": meta, "dates": {}})
@@ -128,25 +144,75 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
         for d in [d for d, e in group["dates"].items() if e["hours"] <= 0 and not e["flags"]]:
             del group["dates"][d]
 
-    return groups
+    return groups, reserved
 
 
 TOLERANCE = 1e-6
 
 
-def allocate_rows(paystub, groups):
-    """Turn each group's per-date target hours into actual Start/Stop rows
-    by walking that date's real clock-in/out segments in order.
+def _consume_in_order(segments, ordered_items):
+    """Try to consume `segments` (in chronological order) exactly matching
+    each (key, target_hours) item's target in turn, using whole segments
+    only. Returns {key: [ClockSegment, ...]} if every item's target was hit
+    exactly and every segment got used, else None.
+    """
+    seg_idx = 0
+    consumed_by_key = {}
+    for key, target in ordered_items:
+        consumed = []
+        total = 0.0
+        while total < target - TOLERANCE:
+            if seg_idx >= len(segments):
+                return None
+            seg = segments[seg_idx]
+            consumed.append(seg)
+            total += seg.hours
+            seg_idx += 1
+        if abs(total - target) > TOLERANCE:
+            return None
+        consumed_by_key[key] = consumed
+    if seg_idx != len(segments):
+        return None
+    return consumed_by_key
 
-    When a date belongs to only one group, all of that date's segments are
-    consumed and contiguous ones (no gap between stop and next start) merge
-    into a single row, matching how the real form is filled out. When a
-    date is split across multiple groups (e.g. two different incidents the
-    same day), segments are consumed in chronological order into each
-    group in turn until that group's known target hours are exactly used
-    up — this only works because segment boundaries line up with incident
-    boundaries in practice; if they don't divide evenly, that's surfaced as
-    an error rather than guessed at.
+
+def _resolve_day(segments, needs, blockers):
+    """Figure out which of a date's clock segments belong to which need.
+
+    `needs` are (group_name, target_hours) pairs we actually want rows for;
+    `blockers` are (key, target_hours) pairs for excluded jobcodes/trans
+    codes that still occupy real clock time that day but produce no output.
+    Both are needed because an excluded block can sit chronologically
+    between two tracked incidents (e.g. someone works incident A, then
+    their home-unit default duty, then incident B, same day) — the file
+    order groups were first seen in doesn't reliably predict that.
+
+    Tries the natural (file) order first since that covers the vast
+    majority of cases cheaply, then falls back to searching other
+    orderings of the (small, per-day) item list. Returns
+    {group_name: [ClockSegment, ...]} for `needs` only, or None if no
+    ordering divides the segments evenly.
+    """
+    items = needs + blockers
+    result = _consume_in_order(segments, items)
+    if result is None:
+        for perm in permutations(items):
+            if perm == tuple(items):
+                continue  # already tried above
+            result = _consume_in_order(segments, list(perm))
+            if result is not None:
+                break
+    if result is None:
+        return None
+    return {name: result[name] for name, _ in needs}
+
+
+def allocate_rows(paystub, groups, reserved):
+    """Turn each group's per-date target hours into actual Start/Stop rows
+    by working out which of that date's real clock-in/out segments belong
+    to it (see _resolve_day), then merging contiguous segments (no gap
+    between stop and next start) into a single row, matching how the real
+    form is filled out.
 
     Returns {group_name: [(date, start, stop, hours_float, flag_suffix), ...]}
     """
@@ -157,30 +223,20 @@ def allocate_rows(paystub, groups):
 
     for d in all_dates:
         segments = list(paystub.clock_segments.get(d, []))
-        needs = [(name, groups[name]["dates"][d]) for name in group_order if d in groups[name]["dates"]]
+        needs = [(name, groups[name]["dates"][d]["hours"]) for name in group_order if d in groups[name]["dates"]]
+        blockers = reserved.get(d, [])
 
-        seg_idx = 0
-        for name, entry in needs:
-            target = entry["hours"]
-            consumed = []
-            total = 0.0
-            while total < target - TOLERANCE:
-                if seg_idx >= len(segments):
-                    raise ScheduleAllocationError(
-                        f"On {d}, clock-in/out segments run out before reaching {name}'s "
-                        f"expected {target:g} hours (only found {total:g}h of clock time). "
-                        f"This date needs manual review."
-                    )
-                seg = segments[seg_idx]
-                consumed.append(seg)
-                total += seg.hours
-                seg_idx += 1
-            if abs(total - target) > TOLERANCE:
-                raise ScheduleAllocationError(
-                    f"On {d}, clock-in/out segments for {name} sum to {total:g}h but "
-                    f"{target:g}h was expected from the daily-hours breakdown. "
-                    f"This date needs manual review."
-                )
+        consumed_by_name = _resolve_day(segments, needs, blockers)
+        if consumed_by_name is None:
+            names = ", ".join(name for name, _ in needs)
+            raise ScheduleAllocationError(
+                f"On {d}, could not find any way to divide that day's clock-in/out segments "
+                f"to match the expected hours for {names}. This date needs manual review."
+            )
+
+        for name, target in needs:
+            entry = groups[name]["dates"][d]
+            consumed = consumed_by_name[name]
 
             # merge contiguous segments (stop == next start) into one row
             merged = []
@@ -325,7 +381,7 @@ def _fill_one_page(paystub, profile, field_map, page_assignments, template_path)
     return writer, page_total
 
 
-def fill(paystub, groups, template_path, field_map_path, profile_path, out_path):
+def fill(paystub, groups, reserved, template_path, field_map_path, profile_path, out_path):
     """Fills the OF-288 template, one physical sheet per up-to-4 columns
     needed. If the pay period's incidents/rows need more than 4 column-starts
     total, extra sheets are written alongside out_path (e.g. "..._page2.pdf"),
@@ -335,7 +391,7 @@ def fill(paystub, groups, template_path, field_map_path, profile_path, out_path)
     """
     field_map = _load_json(field_map_path)
     profile = _load_json(profile_path)
-    rows_by_group = allocate_rows(paystub, groups)
+    rows_by_group = allocate_rows(paystub, groups, reserved)
     grid_len = len(field_map["columns"]["A"]["grid"])
 
     assignments = _plan_column_assignments(groups, rows_by_group, grid_len)

@@ -12,10 +12,38 @@ const transCodeRulesView = document.getElementById("transCodeRulesView");
 const resetRulesBtn = document.getElementById("resetRulesBtn");
 const employeeBanner = document.getElementById("employeeBanner");
 
+// Two kinds of status text: "flavor" (wildland-fire-themed, centered, shown
+// while something's running in the background — the exact wording doesn't
+// matter) and "result" (real information the user needs to read — left
+// aligned, exact wording matters).
 function setStatus(text, isError = false) {
   statusEl.textContent = text;
+  statusEl.classList.remove("result");
   statusEl.classList.toggle("error", isError);
 }
+
+function setResult(text, isError = false) {
+  statusEl.textContent = text;
+  statusEl.classList.add("result");
+  statusEl.classList.toggle("error", isError);
+}
+
+function pick(phrases) {
+  return phrases[Math.floor(Math.random() * phrases.length)];
+}
+
+const FLAVOR = {
+  boot: ["Packing the line gear…", "Loading the buggy…", "Checking out gear from cache…"],
+  install: ["Sharpening the pulaskis…", "Fueling up the saws…", "Testing the radios…"],
+  briefing: ["Getting the morning briefing…", "Checking the weather…", "Reviewing the IAP…"],
+  reading: ["Sizing up the fire…", "Scouting the perimeter…", "Walking the line…"],
+  detecting: ["Calling roll…", "Checking the crew roster…", "Radio check, radio check…"],
+  digging: [
+    "Digging line…", "Cutting fireline…", "Bringing fire…",
+    "Checking for 16s and H…", "Gridding for hot spots…", "Running the pulaski…",
+    "Doing the LCES check…", "Mopping up…", "Reading the 214…",
+  ],
+};
 
 // Assets shared with the desktop CLI live one directory up; pdfminer_words.py
 // is browser-only (replaces pdfplumber, which can't install under Pyodide).
@@ -193,7 +221,7 @@ dropZone.addEventListener("drop", (e) => {
   if (file && file.type === "application/pdf") {
     setSelectedFile(file);
   } else {
-    setStatus("Please drop a PDF file.", true);
+    setResult("Please drop a PDF file.", true);
   }
 });
 
@@ -205,15 +233,15 @@ let currentEmployeeKey = null;
 async function boot() {
   renderRulesView(null);
   try {
-    setStatus("Downloading Python runtime (Pyodide)…");
+    setStatus(pick(FLAVOR.boot));
     pyodide = await loadPyodide();
 
-    setStatus("Installing pypdf + pdfminer.six…");
+    setStatus(pick(FLAVOR.install));
     await pyodide.loadPackage("micropip");
     const micropip = pyodide.pyimport("micropip");
     await micropip.install(["pypdf", "pdfminer.six"]);
 
-    setStatus("Loading conversion logic…");
+    setStatus(pick(FLAVOR.briefing));
     for (const path of [...SHARED_ASSETS, ...LOCAL_ASSETS]) {
       const resp = await fetch(path);
       if (!resp.ok) {
@@ -230,12 +258,12 @@ if "/" not in sys.path:
     sys.path.insert(0, "/")
 `);
 
-    setStatus("Ready. Choose a paystub PDF to convert.");
+    setResult("Ready. Choose a paystub PDF to convert.");
     fileInput.disabled = false;
     convertBtn.disabled = false;
   } catch (err) {
     console.error(err);
-    setStatus("Failed to start: " + err.message, true);
+    setResult("Failed to start: " + err.message, true);
   }
 }
 
@@ -261,7 +289,7 @@ json.dumps(result)
 async function convert() {
   const file = fileInput.files[0];
   if (!file) {
-    setStatus("Choose a paystub PDF first.", true);
+    setResult("Choose a paystub PDF first.", true);
     return;
   }
 
@@ -269,14 +297,14 @@ async function convert() {
   downloadsEl.innerHTML = "";
   convertBtn.disabled = true;
   try {
-    setStatus("Reading file…");
+    setStatus(pick(FLAVOR.reading));
     const bytes = new Uint8Array(await file.arrayBuffer());
     pyodide.FS.writeFile("/paystub.pdf", bytes);
 
-    setStatus("Detecting employee…");
+    setStatus(pick(FLAVOR.detecting));
     const detected = await detectEmployeeName();
     if (!detected.ok) {
-      setStatus("Could not read this paystub:\n" + detected.error, true);
+      setResult("Could not read this paystub:\n" + detected.error, true);
       return;
     }
 
@@ -298,7 +326,7 @@ async function convert() {
 
     const profile = readProfileFromForm(currentEmployeeKey);
     if (isNewEmployee || !profileLooksComplete(profile)) {
-      setStatus(
+      setResult(
         `New/incomplete profile for ${detected.name}. Fill in their info above ` +
         `(at least Hired At and Hiring Unit Name), then click Convert again.`
       );
@@ -309,7 +337,7 @@ async function convert() {
     pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules(currentEmployeeKey))));
     pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules(currentEmployeeKey))));
 
-    setStatus("Parsing paystub…");
+    setStatus(pick(FLAVOR.digging));
     const resultJson = await pyodide.runPythonAsync(`
 import json, traceback
 
@@ -323,7 +351,7 @@ def _run():
     trans_code_rules = json.load(open("/trans_code_rules.json"))
 
     try:
-        groups = of288_filler.build_groups(stub, jobcode_rules, trans_code_rules)
+        groups, reserved = of288_filler.build_groups(stub, jobcode_rules, trans_code_rules)
     except of288_filler.UnrecognizedCodeError as e:
         return {
             "ok": False,
@@ -338,7 +366,7 @@ def _run():
 
     try:
         out_paths, used_columns, grand_total = of288_filler.fill(
-            stub, groups, "/OF288-Fillable.pdf", "/field_map.json", "/profile.json", "/output.pdf"
+            stub, groups, reserved, "/OF288-Fillable.pdf", "/field_map.json", "/profile.json", "/output.pdf"
         )
     except of288_filler.ScheduleAllocationError as e:
         return {"ok": False, "error": str(e)}
@@ -373,16 +401,16 @@ json.dumps(result)
     const result = JSON.parse(resultJson);
 
     if (!result.ok && result.unrecognized) {
-      setStatus("Needs your input before this can finish converting — see below.");
+      setResult("Needs your input before this can finish converting — see below.");
       showResolvePanel(result.unrecognized);
       return;
     }
     if (!result.ok) {
-      setStatus("Cannot convert:\n" + result.error, true);
+      setResult("Cannot convert:\n" + result.error, true);
       return;
     }
 
-    setStatus(result.summary);
+    setResult(result.summary);
     const base = `OF288_PP${result.pay_period_number}_${result.year}`;
     result.out_paths.forEach((path, i) => {
       const data = pyodide.FS.readFile(path);
@@ -396,7 +424,7 @@ json.dumps(result)
     });
   } catch (err) {
     console.error(err);
-    setStatus("Error: " + err.message, true);
+    setResult("Error: " + err.message, true);
   } finally {
     convertBtn.disabled = false;
   }

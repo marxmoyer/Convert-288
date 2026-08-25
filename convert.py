@@ -27,15 +27,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("paystub_pdf")
     ap.add_argument("-o", "--out", default=None)
-    ap.add_argument("--jobcode-rules", default=JOBCODE_RULES)
     args = ap.parse_args()
 
     paystub, _ = paycheck8_parser.parse(args.paystub_pdf)
-    jobcode_rules = _load_rules(args.jobcode_rules)
+    jobcode_rules = _load_rules(JOBCODE_RULES)
     trans_code_rules = _load_rules(TRANS_CODE_RULES)
 
     try:
-        groups = of288_filler.build_groups(paystub, jobcode_rules, trans_code_rules)
+        groups, reserved = of288_filler.build_groups(paystub, jobcode_rules, trans_code_rules)
     except of288_filler.UnrecognizedCodeError as e:
         raise SystemExit(f"Cannot convert: {e}")
 
@@ -54,7 +53,7 @@ def main():
 
     try:
         out_paths, used_columns, grand_total = of288_filler.fill(
-            paystub, groups, TEMPLATE, FIELD_MAP, PROFILE, out_path
+            paystub, groups, reserved, TEMPLATE, FIELD_MAP, PROFILE, out_path
         )
     except of288_filler.ScheduleAllocationError as e:
         raise SystemExit(f"Cannot convert: {e}")
