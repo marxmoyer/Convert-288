@@ -45,7 +45,7 @@ const DEFAULT_TRANS_RULES = {
   "01": { include: true, note: "Regular hours" },
   "21": { include: true, note: "Overtime hours" },
   "14": { include: false, flag: "H", note: "Hazard pay differential — flags the matching worked-hours row with H instead of adding separate hours" },
-  "66": { include: false, note: "Administrative leave — not incident work, excluded entirely (no flag)" },
+  "66": { include: false, note: "Other Leave (per TNAINST: jury duty, funeral, admin leave, hazardous weather dismissal, etc. — any paid absence not charged to annual/sick/comp leave) — not worked time, excluded entirely (no flag)" },
   "31": { include: true, note: "Holiday worked at the basic rate of pay" },
 };
 
