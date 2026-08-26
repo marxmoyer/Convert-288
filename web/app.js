@@ -69,13 +69,28 @@ function startSlowWarning(message, delayMs = 20000) {
   return () => clearTimeout(timer);
 }
 
+function errorMessage(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function guard(fn) {
   return (...args) => {
     try {
-      return fn(...args);
+      const result = fn(...args);
+      // A guarded handler that calls an async function (without awaiting
+      // it — e.g. firing off convert() and moving on) returns a promise
+      // here; a plain try/catch can't see a rejection that arrives later,
+      // so it needs its own .catch() too.
+      if (result && typeof result.then === "function") {
+        result.catch((err) => {
+          console.error(err);
+          setResult("Something went wrong: " + errorMessage(err), true);
+        });
+      }
+      return result;
     } catch (err) {
       console.error(err);
-      setResult("Something went wrong: " + err.message, true);
+      setResult("Something went wrong: " + errorMessage(err), true);
     }
   };
 }
@@ -621,7 +636,7 @@ if "/" not in sys.path:
     convertBtn.disabled = false;
   } catch (err) {
     console.error(err);
-    setResult("Failed to start: " + err.message, true);
+    setResult("Failed to start: " + errorMessage(err), true);
   } finally {
     clearSlowWarning();
   }
@@ -820,7 +835,7 @@ json.dumps(result)
     });
   } catch (err) {
     console.error(err);
-    setResult("Error: " + err.message, true);
+    setResult("Error: " + errorMessage(err), true);
   } finally {
     convertBtn.disabled = false;
     clearSlowWarning();
@@ -860,7 +875,7 @@ function renderJobcodeResolveForm(info) {
   const jobcodeRules = loadJobcodeRules();
   const existingByName = {};
   for (const rule of Object.values(jobcodeRules)) {
-    if (rule.incident_name) existingByName[rule.incident_name] = rule;
+    if (isPlainObject(rule) && rule.incident_name) existingByName[rule.incident_name] = rule;
   }
   const existingNames = Object.keys(existingByName);
 
@@ -976,5 +991,5 @@ convertBtn.addEventListener("click", convert);
 // would ever see.
 boot().catch((err) => {
   console.error(err);
-  setResult("Failed to start: " + err.message, true);
+  setResult("Failed to start: " + errorMessage(err), true);
 });

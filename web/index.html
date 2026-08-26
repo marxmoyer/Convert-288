@@ -175,21 +175,22 @@
 
   .footer-credit { text-align: center; color: #8a9184; font-size: 0.8rem; margin-top: 2rem; }
 
-  .privacyNote {
-    display: flex; gap: 0.6rem; align-items: flex-start; margin-top: 1rem;
-    background: #eef4ee; border: 1px solid var(--fs-green-light); border-radius: 8px;
-    padding: 0.7rem 0.9rem; font-size: 0.85rem; color: var(--fs-green-dark);
+  /* Shared layout for the page's two callout boxes (privacy note, storage
+     warning) — only color/border/margin differ between them. */
+  .calloutBox {
+    display: flex; gap: 0.6rem; align-items: flex-start; border-radius: 8px;
+    padding: 0.7rem 0.9rem; font-size: 0.85rem;
   }
-  .privacyNote .icon { font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
-  .privacyNote strong { display: block; margin-bottom: 0.15rem; }
+  .calloutBox .icon { font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
+  .calloutBox strong { display: block; margin-bottom: 0.15rem; }
+
+  .privacyNote {
+    margin-top: 1rem; background: #eef4ee; border: 1px solid var(--fs-green-light); color: var(--fs-green-dark);
+  }
 
   #storageWarning {
-    display: flex; gap: 0.6rem; align-items: flex-start; margin-bottom: 1rem;
-    background: #fdf3e0; border: 1px solid var(--fs-tan); border-radius: 8px;
-    padding: 0.7rem 0.9rem; font-size: 0.85rem; color: #6b4a1a;
+    margin-bottom: 1rem; background: #fdf3e0; border: 1px solid var(--fs-tan); color: #6b4a1a;
   }
-  #storageWarning .icon { font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
-  #storageWarning strong { display: block; margin-bottom: 0.15rem; }
 </style>
 </head>
 <body>
@@ -207,11 +208,11 @@
   </header>
 
   <main>
-    <div id="storageWarning" style="display:none"></div>
+    <div id="storageWarning" class="calloutBox" style="display:none"></div>
 
     <p class="hint">Handles multiple employees: upload a paystub and it detects who it belongs to automatically.</p>
 
-    <div class="privacyNote">
+    <div class="privacyNote calloutBox">
       <span class="icon">🔒</span>
       <span>
         <strong>Your paystub never leaves this computer.</strong>
