@@ -11,6 +11,28 @@ const jobcodeRulesView = document.getElementById("jobcodeRulesView");
 const transCodeRulesView = document.getElementById("transCodeRulesView");
 const resetRulesBtn = document.getElementById("resetRulesBtn");
 const employeeBanner = document.getElementById("employeeBanner");
+const storageWarningEl = document.getElementById("storageWarning");
+
+// The page's own privacy copy promises "saved only in this browser" — if a
+// save ever silently no-ops (private-browsing storage restrictions, quota,
+// a locked-down browser policy), the user needs to know now, not the next
+// time they open this tab and find their profile/rules gone.
+let storageWarningShown = false;
+function notifyStorageFailure() {
+  if (storageWarningShown || !storageWarningEl) return;
+  storageWarningShown = true;
+  storageWarningEl.innerHTML = "";
+  storageWarningEl.style.display = "flex";
+  const icon = document.createElement("span");
+  icon.className = "icon";
+  icon.textContent = "⚠️";
+  const text = document.createElement("span");
+  text.innerHTML = "<strong>This browser won't save your info.</strong>";
+  const detail = document.createElement("span");
+  detail.textContent = " Profile and rules you enter this session won't be remembered after you close this tab — check for private/incognito mode or a full storage quota.";
+  text.appendChild(detail);
+  storageWarningEl.append(icon, text);
+}
 
 // Two kinds of status text: "flavor" (wildland-fire-themed, centered, shown
 // while something's running in the background — the exact wording doesn't
@@ -30,6 +52,32 @@ function setResult(text, isError = false) {
 
 function fmtHours(n) {
   return String(Math.round(n * 100) / 100);
+}
+
+// Every rules-manager/resolve-panel button handler runs synchronous DOM
+// reads and writes to localStorage-backed data — data a user (or a stray
+// browser quota eviction) can shape unexpectedly. Wrapping a handler in
+// guard() means a bug there shows the user something instead of the click
+// just silently doing nothing, which is what a bare unguarded throw inside
+// an event handler looks like.
+// There's no cancel or progress bar for the Pyodide-driven work in boot()
+// and convert() — without this, a pathological file (or a slow connection)
+// leaves the UI sitting on a randomly-picked flavor string forever, with
+// no way to tell "still working" apart from "frozen tab."
+function startSlowWarning(message, delayMs = 20000) {
+  const timer = setTimeout(() => setStatus(message), delayMs);
+  return () => clearTimeout(timer);
+}
+
+function guard(fn) {
+  return (...args) => {
+    try {
+      return fn(...args);
+    } catch (err) {
+      console.error(err);
+      setResult("Something went wrong: " + err.message, true);
+    }
+  };
 }
 
 // A finished conversion gets its own styled card (matching the rest of the
@@ -52,6 +100,16 @@ function setResultCard(result) {
 
   const list = document.createElement("div");
   list.className = "resultCard-lines";
+  if (result.lines.length === 0) {
+    // Legitimate (e.g. a pay period entirely spent on home-unit duty with
+    // no incident assignment) — but distinct enough from "you worked no
+    // incident time" that it's worth saying explicitly, since a bare
+    // empty card next to "Total: 0 hrs" reads like the parser failed.
+    const empty = document.createElement("div");
+    empty.className = "resultCard-empty";
+    empty.textContent = "No incident time found on this pay period — every jobcode present was recognized and excluded (e.g. home-unit duty), or none matched.";
+    list.appendChild(empty);
+  }
   for (const line of result.lines) {
     const row = document.createElement("div");
     row.className = "resultCard-line";
@@ -145,6 +203,7 @@ function loadAllEmployees() {
   try {
     return JSON.parse(localStorage.getItem(EMPLOYEES_KEY) || "{}");
   } catch {
+    notifyStorageFailure();
     return {};
   }
 }
@@ -153,7 +212,7 @@ function saveAllEmployees(employees) {
   try {
     localStorage.setItem(EMPLOYEES_KEY, JSON.stringify(employees));
   } catch {
-    // localStorage unavailable (private mode, quota, etc.) — non-fatal
+    notifyStorageFailure();
   }
 }
 
@@ -195,7 +254,7 @@ function migrateEmployeeScopedRulesToShared() {
     localStorage.setItem(SHARED_JOBCODE_RULES_KEY, JSON.stringify(jobcodeRules));
     localStorage.setItem(SHARED_TRANS_CODE_RULES_KEY, JSON.stringify(transCodeRules));
   } catch {
-    // localStorage unavailable — non-fatal, just means no persistence
+    notifyStorageFailure();
   }
   saveAllEmployees(employees);
 }
@@ -245,6 +304,7 @@ function loadJobcodeRules() {
   try {
     return JSON.parse(localStorage.getItem(SHARED_JOBCODE_RULES_KEY) || "{}");
   } catch {
+    notifyStorageFailure();
     return {};
   }
 }
@@ -253,7 +313,7 @@ function saveJobcodeRules(rules) {
   try {
     localStorage.setItem(SHARED_JOBCODE_RULES_KEY, JSON.stringify(rules));
   } catch {
-    // localStorage unavailable — non-fatal
+    notifyStorageFailure();
   }
   renderRulesView();
 }
@@ -263,6 +323,7 @@ function loadTransCodeRules() {
     const raw = localStorage.getItem(SHARED_TRANS_CODE_RULES_KEY);
     return raw ? JSON.parse(raw) : { ...DEFAULT_TRANS_RULES };
   } catch {
+    notifyStorageFailure();
     return { ...DEFAULT_TRANS_RULES };
   }
 }
@@ -271,12 +332,23 @@ function saveTransCodeRules(rules) {
   try {
     localStorage.setItem(SHARED_TRANS_CODE_RULES_KEY, JSON.stringify(rules));
   } catch {
-    // localStorage unavailable — non-fatal
+    notifyStorageFailure();
   }
   renderRulesView();
 }
 
+// Rules live in localStorage, which anyone can hand-edit via devtools, and
+// can also end up half-written by a quota eviction mid-save — so treat
+// every stored rule as untrusted shape, not just untrusted content. A
+// malformed entry here must never throw: this runs during boot() (before
+// error handling exists yet) and inside nearly every rules-manager button
+// handler, so one bad entry throwing would take the whole page down with it.
+function isPlainObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 function jobcodeRuleSummary(rule) {
+  if (!isPlainObject(rule)) return "(invalid saved entry — delete and re-add it)";
   if (rule.include === false) {
     return `Excluded${rule.note ? " — " + rule.note : ""}`;
   }
@@ -287,6 +359,7 @@ function jobcodeRuleSummary(rule) {
 }
 
 function transCodeRuleSummary(rule) {
+  if (!isPlainObject(rule)) return "(invalid saved entry — delete and re-add it)";
   if (rule.include) return `Included as worked hours${rule.note ? " — " + rule.note : ""}`;
   if (rule.flag) return `Excluded, flags matching hours ${rule.flag}${rule.note ? " — " + rule.note : ""}`;
   return `Excluded entirely${rule.note ? " — " + rule.note : ""}`;
@@ -309,11 +382,11 @@ function renderRuleRow(container, code, summary, onEdit, onDelete) {
   const editBtn = document.createElement("button");
   editBtn.className = "linklike";
   editBtn.textContent = "Edit";
-  editBtn.addEventListener("click", onEdit);
+  editBtn.addEventListener("click", guard(onEdit));
   const deleteBtn = document.createElement("button");
   deleteBtn.className = "linklike danger";
   deleteBtn.textContent = "Delete";
-  deleteBtn.addEventListener("click", onDelete);
+  deleteBtn.addEventListener("click", guard(onDelete));
   actions.append(editBtn, deleteBtn);
   row.append(main, actions);
   container.appendChild(row);
@@ -361,6 +434,7 @@ function renderRulesView() {
 }
 
 function openJobcodeEditForm(code, rule) {
+  if (!isPlainObject(rule)) rule = { include: false };
   resolvePanel.style.display = "block";
   resolvePanel.innerHTML = `
     <h3 id="ef_header"></h3>
@@ -395,7 +469,7 @@ function openJobcodeEditForm(code, rule) {
     document.getElementById(`ef_${key}`).value = rule[key] || "";
   }
 
-  document.getElementById("ef_save").addEventListener("click", () => {
+  document.getElementById("ef_save").addEventListener("click", guard(() => {
     const rules = loadJobcodeRules();
     if (treatmentSelect.value === "exclude") {
       rules[code] = { include: false, note: rule.note || "Excluded via rules manager." };
@@ -409,13 +483,14 @@ function openJobcodeEditForm(code, rule) {
     }
     saveJobcodeRules(rules);
     resolvePanel.style.display = "none";
-  });
-  document.getElementById("ef_cancel").addEventListener("click", () => {
+  }));
+  document.getElementById("ef_cancel").addEventListener("click", guard(() => {
     resolvePanel.style.display = "none";
-  });
+  }));
 }
 
 function openTransCodeEditForm(code, rule) {
+  if (!isPlainObject(rule)) rule = { include: false };
   resolvePanel.style.display = "block";
   resolvePanel.innerHTML = `
     <h3 id="ef_header"></h3>
@@ -441,7 +516,7 @@ function openTransCodeEditForm(code, rule) {
   const treatmentSelect = document.getElementById("ef_treatment");
   treatmentSelect.value = rule.include ? "include" : rule.flag ? `flag_${rule.flag}` : "exclude";
 
-  document.getElementById("ef_save").addEventListener("click", () => {
+  document.getElementById("ef_save").addEventListener("click", guard(() => {
     const treatment = treatmentSelect.value;
     const rules = loadTransCodeRules();
     if (treatment === "include") {
@@ -454,17 +529,17 @@ function openTransCodeEditForm(code, rule) {
     }
     saveTransCodeRules(rules);
     resolvePanel.style.display = "none";
-  });
-  document.getElementById("ef_cancel").addEventListener("click", () => {
+  }));
+  document.getElementById("ef_cancel").addEventListener("click", guard(() => {
     resolvePanel.style.display = "none";
-  });
+  }));
 }
 
-resetRulesBtn.addEventListener("click", () => {
+resetRulesBtn.addEventListener("click", guard(() => {
   if (!confirm("Reset ALL saved incident/trans-code rules? This affects every employee in this browser and can't be undone.")) return;
   saveJobcodeRules({});
   saveTransCodeRules({ ...DEFAULT_TRANS_RULES });
-});
+}));
 
 // --- Drag & drop ----------------------------------------------------------
 
@@ -505,9 +580,17 @@ let pyodide;
 let currentEmployeeKey = null;
 
 async function boot() {
-  migrateEmployeeScopedRulesToShared();
-  renderRulesView();
+  const clearSlowWarning = startSlowWarning(
+    "Still starting up — this can take longer on a slow connection or an older device."
+  );
   try {
+    // These read/render whatever's already in localStorage, which could be
+    // malformed (hand-edited via devtools, half-written by a quota
+    // eviction) — inside the try so a bad entry shows "Failed to start"
+    // instead of leaving the page stuck on its static initial text forever.
+    migrateEmployeeScopedRulesToShared();
+    renderRulesView();
+
     setStatus(pick(FLAVOR.boot));
     pyodide = await loadPyodide();
 
@@ -539,6 +622,8 @@ if "/" not in sys.path:
   } catch (err) {
     console.error(err);
     setResult("Failed to start: " + err.message, true);
+  } finally {
+    clearSlowWarning();
   }
 }
 
@@ -581,6 +666,9 @@ async function convert() {
   resolvePanel.style.display = "none";
   downloadsEl.innerHTML = "";
   convertBtn.disabled = true;
+  const clearSlowWarning = startSlowWarning(
+    "Still working — this file may be unusually large or complex."
+  );
   try {
     setStatus(pick(FLAVOR.reading));
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -629,9 +717,10 @@ async function convert() {
     setStatus(pick(FLAVOR.digging));
     const resultJson = await pyodide.runPythonAsync(`
 import json, traceback
+import paycheck8_parser
 
 def _run():
-    import pdfminer_words, paycheck8_parser, of288_filler, of288_excel_filler
+    import pdfminer_words, of288_filler, of288_excel_filler
 
     words = pdfminer_words.extract_words("/paystub.pdf")
     stub, _ = paycheck8_parser.parse_from_words(words)
@@ -687,8 +776,19 @@ def _run():
 
 try:
     result = _run()
+except paycheck8_parser.TotalHoursMismatchError as e:
+    result = {"ok": False, "error": str(e)}
 except Exception:
-    result = {"ok": False, "error": traceback.format_exc()}
+    # Something not specifically anticipated (a malformed rule, an
+    # unusual PDF layout, a corrupted template asset, ...) — give a short
+    # message instead of dumping a raw traceback into the result box, but
+    # keep the traceback available in the console for real debugging.
+    result = {
+        "ok": False,
+        "error": "Something unexpected went wrong converting this paystub. "
+                 "Check the browser console for technical details, or try a different file.",
+        "debug": traceback.format_exc(),
+    }
 
 json.dumps(result)
 `);
@@ -701,6 +801,7 @@ json.dumps(result)
       return;
     }
     if (!result.ok) {
+      if (result.debug) console.error(result.debug);
       setResult("Cannot convert:\n" + result.error, true);
       return;
     }
@@ -722,6 +823,7 @@ json.dumps(result)
     setResult("Error: " + err.message, true);
   } finally {
     convertBtn.disabled = false;
+    clearSlowWarning();
   }
 }
 
@@ -799,7 +901,7 @@ function renderJobcodeResolveForm(info) {
     }
   });
 
-  document.getElementById("rf_save").addEventListener("click", () => {
+  document.getElementById("rf_save").addEventListener("click", guard(() => {
     const values = {};
     for (const [id, key] of INCIDENT_FIELDS) {
       values[key] = document.getElementById(id).value.trim();
@@ -812,14 +914,14 @@ function renderJobcodeResolveForm(info) {
     saveJobcodeRules(jobcodeRules);
     resolvePanel.style.display = "none";
     convert();
-  });
+  }));
 
-  document.getElementById("rf_exclude").addEventListener("click", () => {
+  document.getElementById("rf_exclude").addEventListener("click", guard(() => {
     jobcodeRules[info.jobcode] = { include: false, note: "Excluded via web UI — not incident time." };
     saveJobcodeRules(jobcodeRules);
     resolvePanel.style.display = "none";
     convert();
-  });
+  }));
 }
 
 function renderTransCodeResolveForm(info) {
@@ -849,7 +951,7 @@ function renderTransCodeResolveForm(info) {
     `Seen on jobcode: ${info.jobcode} (override ${info.override})\n` +
     `Hours found on:\n${formatHoursByDate(info.hours_by_date)}`;
 
-  document.getElementById("rf_save").addEventListener("click", () => {
+  document.getElementById("rf_save").addEventListener("click", guard(() => {
     const treatment = document.getElementById("rf_treatment").value;
     const transRules = loadTransCodeRules();
     if (treatment === "include") {
@@ -863,8 +965,16 @@ function renderTransCodeResolveForm(info) {
     saveTransCodeRules(transRules);
     resolvePanel.style.display = "none";
     convert();
-  });
+  }));
 }
 
 convertBtn.addEventListener("click", convert);
-boot();
+// boot() has its own try/catch covering everything it does, but this is a
+// last-resort net: without it, any error boot() somehow doesn't catch
+// becomes a silent unhandled promise rejection — the page just sits on
+// its static initial text forever, with only a console error no user
+// would ever see.
+boot().catch((err) => {
+  console.error(err);
+  setResult("Failed to start: " + err.message, true);
+});
