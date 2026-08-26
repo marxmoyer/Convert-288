@@ -1,0 +1,18 @@
+{
+  "_comment": "Maps each Paycheck8 'Jobcode/FY' code to how it should show up on the OF-288. Unrecognized jobcodes cause the tool to stop and ask, rather than guess. Copy this file to jobcode_rules.json (gitignored — it fills up with your own real work data) and edit it as new jobcodes show up on future paystubs.",
+  "WFSE0000": {
+    "include": false,
+    "note": "Example: a default/home-unit duty code, not incident time — excluded from the OF-288 entirely."
+  },
+  "B2EXAMP26": {
+    "include": true,
+    "group": "EXAMPLE_FIRE",
+    "accounting_code": "0000",
+    "trans_overrides": {
+      "66": {
+        "include": true,
+        "note": "Example: a per-jobcode override for a specific trans code that needs different handling than the global trans_code_rules default."
+      }
+    }
+  }
+}

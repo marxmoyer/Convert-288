@@ -19,7 +19,13 @@ OUTPUT_DIR = "testoutput"
 
 
 def _load_rules(path):
-    data = json.load(open(path))
+    try:
+        data = json.load(open(path))
+    except FileNotFoundError:
+        example = path.replace(".json", ".example.json")
+        if os.path.exists(example):
+            raise SystemExit(f"Missing {path} — copy {example} to {path} to get started, then fill in your own data.")
+        raise SystemExit(f"Missing {path}.")
     data.pop("_comment", None)
     return data
 

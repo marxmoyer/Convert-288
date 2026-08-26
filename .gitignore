@@ -11,6 +11,7 @@ wheels/
 
 # Personal/sensitive data — never commit these
 profile.json
+jobcode_rules.json
 testoutput/
 *.xlsx
 # ...except the blank Excel template itself — same category as
