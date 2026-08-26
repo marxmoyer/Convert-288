@@ -28,6 +28,52 @@ function setResult(text, isError = false) {
   statusEl.classList.toggle("error", isError);
 }
 
+function fmtHours(n) {
+  return String(Math.round(n * 100) / 100);
+}
+
+// A finished conversion gets its own styled card (matching the rest of the
+// page's fonts/spacing) instead of a plain preformatted text dump.
+function setResultCard(result) {
+  statusEl.classList.add("result");
+  statusEl.classList.remove("error");
+  statusEl.innerHTML = "";
+
+  const card = document.createElement("div");
+  card.className = "resultCard";
+
+  const header = document.createElement("div");
+  header.className = "resultCard-header";
+  header.textContent = `${result.employee_name} — PP${result.pay_period_number} ${result.year}`;
+  const dates = document.createElement("div");
+  dates.className = "resultCard-dates";
+  dates.textContent = `${result.period_start} to ${result.period_end}`;
+  card.append(header, dates);
+
+  const list = document.createElement("div");
+  list.className = "resultCard-lines";
+  for (const line of result.lines) {
+    const row = document.createElement("div");
+    row.className = "resultCard-line";
+    const name = document.createElement("span");
+    name.className = "resultCard-line-name";
+    name.textContent = line.name;
+    const detail = document.createElement("span");
+    detail.className = "resultCard-line-detail";
+    detail.textContent = `Account: ${line.accounting_code} · ${fmtHours(line.hours)} hrs · ${line.days} day${line.days === 1 ? "" : "s"}`;
+    row.append(name, detail);
+    list.appendChild(row);
+  }
+  card.appendChild(list);
+
+  const total = document.createElement("div");
+  total.className = "resultCard-total";
+  total.textContent = `Total: ${fmtHours(result.grand_total)} hrs`;
+  card.appendChild(total);
+
+  statusEl.appendChild(card);
+}
+
 function pick(phrases) {
   return phrases[Math.floor(Math.random() * phrases.length)];
 }
@@ -593,22 +639,25 @@ def _run():
     except of288_filler.ScheduleAllocationError as e:
         return {"ok": False, "error": str(e)}
 
-    summary_lines = [
-        f"Employee: {stub.employee_name}  PP{stub.pay_period_number} {stub.year} "
-        f"({stub.period_start} - {stub.period_end})"
-    ]
+    lines = []
     for name, g in groups.items():
         if not g["dates"]:
             continue  # every date this group had got excluded down to nothing
         total = sum(e["hours"] for e in g["dates"].values())
-        summary_lines.append(
-            f"  {name} (accounting code {g['meta']['accounting_code']}): {total:g} hrs across {len(g['dates'])} day(s)"
-        )
-    summary_lines.append(f"Total hours (all columns): {grand_total:g}")
+        lines.append({
+            "name": name,
+            "accounting_code": g["meta"]["accounting_code"],
+            "hours": total,
+            "days": len(g["dates"]),
+        })
 
     return {
         "ok": True,
-        "summary": "\\n".join(summary_lines),
+        "employee_name": stub.employee_name.title(),
+        "period_start": stub.period_start.isoformat(),
+        "period_end": stub.period_end.isoformat(),
+        "lines": lines,
+        "grand_total": grand_total,
         "out_paths": out_paths,
         "pay_period_number": stub.pay_period_number,
         "year": stub.year,
@@ -634,7 +683,7 @@ json.dumps(result)
       return;
     }
 
-    setResult(result.summary);
+    setResultCard(result);
     const base = `OF288_PP${result.pay_period_number}_${result.year}`;
     result.out_paths.forEach((path, i) => {
       const data = pyodide.FS.readFile(path);

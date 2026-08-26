@@ -60,11 +60,26 @@
 
   main { max-width: 680px; margin: 0 auto; padding: 1.5rem 1rem 3rem; }
 
-  #status { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 0.85rem;
+  #status { white-space: pre-wrap; font-family: var(--font-body); font-size: 0.95rem;
             background: white; border: 1px solid var(--fs-border); border-radius: 8px; padding: 0.85rem;
             min-height: 2rem; margin-top: 1rem; text-align: center; }
   #status.result { text-align: left; }
   #status.error { background: #fdeaea; border-color: #e0a0a0; color: #7a1f1f; text-align: left; }
+
+  .resultCard { display: flex; flex-direction: column; gap: 0.6rem; }
+  .resultCard-header { font-family: var(--font-display); font-weight: 700; font-size: 1.15rem; color: var(--fs-green-dark); }
+  .resultCard-dates { font-size: 0.85rem; color: #6b7566; margin-top: -0.45rem; }
+  .resultCard-lines { display: flex; flex-direction: column; gap: 0.4rem; }
+  .resultCard-line {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+    background: var(--fs-cream); border: 1px solid var(--fs-border); border-radius: 6px; padding: 0.5rem 0.7rem;
+  }
+  .resultCard-line-name { font-weight: 700; color: var(--fs-text); }
+  .resultCard-line-detail { font-size: 0.85rem; color: #55604f; }
+  .resultCard-total {
+    font-family: var(--font-display); font-weight: 800; font-size: 1.2rem; color: var(--fs-green-dark);
+    text-align: right; padding-top: 0.4rem; border-top: 2px solid var(--fs-tan);
+  }
 
   #controls { margin-top: 1rem; }
   button {
