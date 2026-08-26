@@ -27,6 +27,15 @@ FROM_TO_X_MIN, FROM_TO_X_MAX = 138, 146
 # to locate the "Total" header labels explicitly.
 MAX_COLUMN_DISTANCE = 12
 
+# No single calendar day can have more than 24 clocked hours — a value
+# above this is never a real per-day entry, no matter how close it lands
+# to a date column's x0. Confirmed real case: some rows carry a column
+# (a per-line running/period total, not a week/grand total, so it isn't
+# far enough right for MAX_COLUMN_DISTANCE to exclude it as one) that can
+# coincidentally land within column-bucketing distance of the first date
+# header, silently inflating that date's hours by the row's own total.
+MAX_PLAUSIBLE_DAILY_HOURS = 24
+
 
 class TotalHoursMismatchError(ValueError):
     """Raised when the sum of every hours value actually extracted from the
@@ -226,6 +235,8 @@ def parse_from_words(words):
                 val = float(w["text"])
             except ValueError:
                 continue
+            if val > MAX_PLAUSIBLE_DAILY_HOURS:
+                continue  # physically impossible for one day — a total column, not a per-day value
             d = _nearest_column(w["x0"], columns)
             if d is None:
                 continue  # week/grand-total column, not a per-day value
