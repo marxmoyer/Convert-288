@@ -234,9 +234,9 @@ function jobcodeRuleSummary(rule) {
   if (rule.include === false) {
     return `Excluded${rule.note ? " — " + rule.note : ""}`;
   }
-  const bits = [rule.incident_name || rule.group || "(no incident name)"];
-  bits.push(`acct ${rule.accounting_code || "—"}`);
-  if (rule.fire_code) bits.push(`fire ${rule.fire_code}`);
+  const bits = [`Incident: ${rule.incident_name || rule.group || "(no incident name)"}`];
+  bits.push(`Account: ${rule.accounting_code || "—"}`);
+  if (rule.fire_code) bits.push(`Fire Code: ${rule.fire_code}`);
   return bits.join(" · ");
 }
 
