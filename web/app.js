@@ -297,8 +297,13 @@ function renderRuleRow(container, code, summary, onEdit, onDelete) {
   row.className = "ruleRow";
   const main = document.createElement("div");
   main.className = "ruleRow-main";
-  main.innerHTML = `<span class="ruleRow-code">${code}</span><span class="ruleRow-summary"></span>`;
-  main.querySelector(".ruleRow-summary").textContent = summary;
+  const codeSpan = document.createElement("span");
+  codeSpan.className = "ruleRow-code";
+  codeSpan.textContent = code; // jobcode/trans code text ultimately comes from the uploaded PDF — never interpolate into innerHTML
+  const summarySpan = document.createElement("span");
+  summarySpan.className = "ruleRow-summary";
+  summarySpan.textContent = summary;
+  main.append(codeSpan, summarySpan);
   const actions = document.createElement("div");
   actions.className = "ruleRow-actions";
   const editBtn = document.createElement("button");
@@ -358,7 +363,7 @@ function renderRulesView() {
 function openJobcodeEditForm(code, rule) {
   resolvePanel.style.display = "block";
   resolvePanel.innerHTML = `
-    <h3>Edit jobcode ${code}</h3>
+    <h3 id="ef_header"></h3>
     <div class="row">
       <label>Treatment
         <select id="ef_treatment">
@@ -376,6 +381,9 @@ function openJobcodeEditForm(code, rule) {
       <button id="ef_cancel" class="secondary">Cancel</button>
     </div>
   `;
+  // jobcode text ultimately comes from the uploaded PDF — set via
+  // textContent, not interpolated into the innerHTML template above.
+  document.getElementById("ef_header").textContent = `Edit jobcode ${code}`;
   const treatmentSelect = document.getElementById("ef_treatment");
   const fieldsRow = document.getElementById("ef_incident_fields");
   treatmentSelect.value = rule.include === false ? "exclude" : "include";
@@ -410,7 +418,7 @@ function openJobcodeEditForm(code, rule) {
 function openTransCodeEditForm(code, rule) {
   resolvePanel.style.display = "block";
   resolvePanel.innerHTML = `
-    <h3>Edit trans code ${code}</h3>
+    <h3 id="ef_header"></h3>
     <div class="row">
       <label>Treatment
         <select id="ef_treatment">
@@ -427,6 +435,9 @@ function openTransCodeEditForm(code, rule) {
       <button id="ef_cancel" class="secondary">Cancel</button>
     </div>
   `;
+  // trans code text ultimately comes from the uploaded PDF — set via
+  // textContent, not interpolated into the innerHTML template above.
+  document.getElementById("ef_header").textContent = `Edit trans code ${code}`;
   const treatmentSelect = document.getElementById("ef_treatment");
   treatmentSelect.value = rule.include ? "include" : rule.flag ? `flag_${rule.flag}` : "exclude";
 
@@ -536,17 +547,24 @@ if "/" not in sys.path:
 async function detectEmployeeName() {
   const nameJson = await pyodide.runPythonAsync(`
 import json, traceback
+import paycheck8_parser
 def _run():
-    import pdfminer_words, paycheck8_parser
+    import pdfminer_words
     words = pdfminer_words.extract_words("/paystub.pdf")
     stub, _ = paycheck8_parser.parse_from_words(words)
     return {"ok": True, "name": stub.employee_name}
 try:
     result = _run()
+except paycheck8_parser.TotalHoursMismatchError as e:
+    # This IS a real Paycheck8 paystub — the header parsed fine — but the
+    # daily-hours grid didn't fully reconcile against its own printed
+    # total, which means a row was probably missed. Surface this
+    # specifically rather than the generic "not a paystub" message below.
+    result = {"ok": False, "kind": "hours_mismatch", "message": str(e)}
 except Exception:
-    # Anything that can go wrong at this stage means this file doesn't
-    # look like a Paycheck8 Time & Attendance PDF — not necessarily a bug.
-    # Keep the traceback for our own debugging, but don't show it to the user.
+    # Anything else means this file doesn't look like a Paycheck8 Time &
+    # Attendance PDF at all — not necessarily a bug. Keep the traceback
+    # for our own debugging, but don't show it to the user.
     result = {"ok": False, "debug": traceback.format_exc()}
 json.dumps(result)
 `);
@@ -571,8 +589,12 @@ async function convert() {
     setStatus(pick(FLAVOR.detecting));
     const detected = await detectEmployeeName();
     if (!detected.ok) {
-      console.error(detected.debug);
-      setResult("This doesn't look like a Paycheck8 paystub. Please upload a Paycheck8 Time & Attendance PDF.", true);
+      if (detected.kind === "hours_mismatch") {
+        setResult(detected.message, true);
+      } else {
+        console.error(detected.debug);
+        setResult("This doesn't look like a Paycheck8 paystub. Please upload a Paycheck8 Time & Attendance PDF.", true);
+      }
       return;
     }
 
@@ -741,11 +763,8 @@ function renderJobcodeResolveForm(info) {
   const existingNames = Object.keys(existingByName);
 
   resolvePanel.innerHTML = `
-    <h3>New jobcode found: ${info.jobcode}</h3>
-    <div class="details">Override/accounting code on paystub: ${info.override}
-Trans code: ${info.trans_code}
-Hours found on:
-${formatHoursByDate(info.hours_by_date)}</div>
+    <h3 id="rf_header"></h3>
+    <div class="details" id="rf_details"></div>
     <p class="hint">What incident is this for ${currentEmployeeKey}? (Type an incident name you've
     already used and the rest fills in automatically.) None of this is guessable from the paystub —
     it comes from the resource order.</p>
@@ -763,6 +782,13 @@ ${formatHoursByDate(info.hours_by_date)}</div>
       <button id="rf_exclude" class="secondary">This isn't incident time — exclude it</button>
     </div>
   `;
+  // jobcode/override/trans_code come from the uploaded PDF — set via
+  // textContent, not interpolated into the innerHTML template above.
+  document.getElementById("rf_header").textContent = `New jobcode found: ${info.jobcode}`;
+  document.getElementById("rf_details").textContent =
+    `Override/accounting code on paystub: ${info.override}\n` +
+    `Trans code: ${info.trans_code}\n` +
+    `Hours found on:\n${formatHoursByDate(info.hours_by_date)}`;
 
   const nameInput = document.getElementById("rf_incident_name");
   nameInput.addEventListener("input", () => {
@@ -798,10 +824,8 @@ ${formatHoursByDate(info.hours_by_date)}</div>
 
 function renderTransCodeResolveForm(info) {
   resolvePanel.innerHTML = `
-    <h3>New trans code found: ${info.trans_code}</h3>
-    <div class="details">Seen on jobcode: ${info.jobcode} (override ${info.override})
-Hours found on:
-${formatHoursByDate(info.hours_by_date)}</div>
+    <h3 id="rf_header"></h3>
+    <div class="details" id="rf_details"></div>
     <p class="hint">How should this trans code's hours be treated?</p>
     <div class="row">
       <label>Treatment
@@ -818,6 +842,12 @@ ${formatHoursByDate(info.hours_by_date)}</div>
       <button id="rf_save">Save & continue</button>
     </div>
   `;
+  // jobcode/override/trans_code come from the uploaded PDF — set via
+  // textContent, not interpolated into the innerHTML template above.
+  document.getElementById("rf_header").textContent = `New trans code found: ${info.trans_code}`;
+  document.getElementById("rf_details").textContent =
+    `Seen on jobcode: ${info.jobcode} (override ${info.override})\n` +
+    `Hours found on:\n${formatHoursByDate(info.hours_by_date)}`;
 
   document.getElementById("rf_save").addEventListener("click", () => {
     const treatment = document.getElementById("rf_treatment").value;
