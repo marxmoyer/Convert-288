@@ -3,6 +3,22 @@
 <head>
 <meta charset="utf-8">
 <title>Convert-288</title>
+<!-- Belt-and-suspenders privacy control, not just a promise in the copy below:
+     the browser itself will refuse any network request this page tries to make
+     to a host that isn't one of these. Nothing here can talk to a server that
+     could receive your paystub even if a future bug tried to send it somewhere. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval' 'unsafe-eval';
+  worker-src 'self' blob:;
+  connect-src 'self' https://cdn.jsdelivr.net https://pypi.org https://files.pythonhosted.org;
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+  font-src https://fonts.gstatic.com;
+  img-src 'self' data:;
+  object-src 'none';
+  base-uri 'none';
+  form-action 'none';
+">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
@@ -121,11 +137,35 @@
 
   details.rulesManager { margin-top: 1.5rem; }
   details.rulesManager summary { cursor: pointer; color: var(--fs-green-dark); font-family: var(--font-display); font-weight: 700; }
-  details.rulesManager pre { background: white; border: 1px solid var(--fs-border); border-radius: 6px;
-    padding: 0.6rem; font-size: 0.8rem; overflow-x: auto; }
   details.rulesManager button { margin-top: 0.4rem; }
 
+  .rulesList { display: flex; flex-direction: column; gap: 0.4rem; margin: 0.4rem 0 0.9rem; }
+  .ruleRow {
+    display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+    background: white; border: 1px solid var(--fs-border); border-radius: 6px; padding: 0.5rem 0.7rem;
+    flex-wrap: wrap;
+  }
+  .ruleRow-main { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+  .ruleRow-code { font-family: ui-monospace, monospace; font-weight: 700; font-size: 0.85rem; color: var(--fs-green-dark); }
+  .ruleRow-summary { font-size: 0.85rem; color: var(--fs-text); word-break: break-word; }
+  .ruleRow-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+  button.linklike {
+    background: none; color: var(--fs-green); border: 1px solid var(--fs-border); padding: 0.25rem 0.6rem;
+    font-size: 0.8rem; font-weight: 700; border-radius: 5px;
+  }
+  button.linklike:hover { background: #eef4ee; }
+  button.linklike.danger { color: #a33; }
+  button.linklike.danger:hover { background: #fdeaea; }
+
   .footer-credit { text-align: center; color: #8a9184; font-size: 0.8rem; margin-top: 2rem; }
+
+  .privacyNote {
+    display: flex; gap: 0.6rem; align-items: flex-start; margin-top: 1rem;
+    background: #eef4ee; border: 1px solid var(--fs-green-light); border-radius: 8px;
+    padding: 0.7rem 0.9rem; font-size: 0.85rem; color: var(--fs-green-dark);
+  }
+  .privacyNote .icon { font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
+  .privacyNote strong { display: block; margin-bottom: 0.15rem; }
 </style>
 </head>
 <body>
@@ -143,8 +183,18 @@
   </header>
 
   <main>
-    <p class="hint">Runs entirely in your browser — the paystub PDF never leaves your machine.
-      Handles multiple employees: upload a paystub and it detects who it belongs to automatically.</p>
+    <p class="hint">Handles multiple employees: upload a paystub and it detects who it belongs to automatically.</p>
+
+    <div class="privacyNote">
+      <span class="icon">🔒</span>
+      <span>
+        <strong>Your paystub never leaves this computer.</strong>
+        Everything — reading the PDF, filling out the form, saving your info for next time — happens right here in
+        this browser tab. There's no server on the other end to send it to, not even ours. Nothing is uploaded,
+        emailed, or stored anywhere but this device. Once this page has finished loading (the box below says
+        "Ready"), you could turn off your Wi-Fi entirely and it would keep working.
+      </span>
+    </div>
 
     <div id="employeeBanner" style="display:none"></div>
 
@@ -184,12 +234,12 @@
 
     <details class="rulesManager">
       <summary>Manage your saved rules</summary>
-      <p class="hint">These are stored only in this browser and control how your jobcodes/trans codes map onto the OF-288.</p>
+      <p class="hint">Stored only in this browser and shared across every employee — control how your jobcodes/trans codes map onto the OF-288. Click Edit to fix a mistake without losing everything else.</p>
       <p><strong>Incident/jobcode rules</strong></p>
-      <pre id="jobcodeRulesView"></pre>
+      <div id="jobcodeRulesView" class="rulesList"></div>
       <p><strong>Trans code rules</strong></p>
-      <pre id="transCodeRulesView"></pre>
-      <button id="resetRulesBtn" class="secondary">Reset all my rules</button>
+      <div id="transCodeRulesView" class="rulesList"></div>
+      <button id="resetRulesBtn" class="secondary">Reset all rules</button>
     </details>
 
     <p class="footer-credit">Made by MMoyer</p>

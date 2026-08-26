@@ -60,20 +60,28 @@ const FLAVOR = {
 const SHARED_ASSETS = [
   "../paycheck8_parser.py",
   "../of288_filler.py",
-  "../field_map.json",
-  "../OF288-Fillable.pdf",
+  "../of288_excel_filler.py",
+  "../ref/OF288 Excel Blank Template.xlsx",
 ];
 const LOCAL_ASSETS = ["pdfminer_words.py"];
 
-// --- Per-employee storage -------------------------------------------------
+// --- Storage -----------------------------------------------------------
 //
-// One person often runs this for a whole crew, not just themselves, so
-// storage is keyed by employee (detected from the paystub's own "Employee
-// Name" field) rather than assuming one browser == one employee. Each
-// employee gets their own profile fields, jobcode rules, and trans-code
-// rules, all under one localStorage entry.
+// One person often runs this for a whole crew, not just themselves. Two
+// different scopes of data result:
+//
+// - Profile fields (Hired At, Hiring Unit, Type of Employment) are
+//   genuinely personal — kept per employee, keyed by employee name as
+//   detected from the paystub.
+// - Jobcode rules and trans-code rules describe an INCIDENT or a pay code,
+//   not a person — the same fire code means the same incident/accounting
+//   info no matter which crew member worked it. These are shared across
+//   every employee in this browser, entered once, so a second employee
+//   working the same fire never has to re-enter it.
 
 const EMPLOYEES_KEY = "of288_employees_v1";
+const SHARED_JOBCODE_RULES_KEY = "of288_shared_jobcode_rules_v1";
+const SHARED_TRANS_CODE_RULES_KEY = "of288_shared_trans_code_rules_v1";
 
 const DEFAULT_TRANS_RULES = {
   "01": { include: true, note: "Regular hours" },
@@ -110,12 +118,7 @@ function getEmployee(key) {
 function ensureEmployee(key, displayName) {
   const employees = loadAllEmployees();
   if (!employees[key]) {
-    employees[key] = {
-      displayName,
-      profile: {},
-      jobcode_rules: {},
-      trans_code_rules: { ...DEFAULT_TRANS_RULES },
-    };
+    employees[key] = { displayName, profile: {} };
     saveAllEmployees(employees);
   }
   return employees[key];
@@ -124,6 +127,30 @@ function ensureEmployee(key, displayName) {
 function updateEmployee(key, patch) {
   const employees = loadAllEmployees();
   employees[key] = { ...employees[key], ...patch };
+  saveAllEmployees(employees);
+}
+
+// One-time upgrade from the old per-employee rule storage: merge whatever
+// every employee had saved into the new shared store, then drop the
+// now-redundant per-employee copies. Runs once — after the shared key
+// exists (even as {}), this is a no-op forever.
+function migrateEmployeeScopedRulesToShared() {
+  if (localStorage.getItem(SHARED_JOBCODE_RULES_KEY) !== null) return;
+  const employees = loadAllEmployees();
+  const jobcodeRules = {};
+  const transCodeRules = { ...DEFAULT_TRANS_RULES };
+  for (const emp of Object.values(employees)) {
+    Object.assign(jobcodeRules, emp.jobcode_rules || {});
+    Object.assign(transCodeRules, emp.trans_code_rules || {});
+    delete emp.jobcode_rules;
+    delete emp.trans_code_rules;
+  }
+  try {
+    localStorage.setItem(SHARED_JOBCODE_RULES_KEY, JSON.stringify(jobcodeRules));
+    localStorage.setItem(SHARED_TRANS_CODE_RULES_KEY, JSON.stringify(transCodeRules));
+  } catch {
+    // localStorage unavailable — non-fatal, just means no persistence
+  }
   saveAllEmployees(employees);
 }
 
@@ -166,46 +193,220 @@ function profileLooksComplete(profile) {
   return Boolean(profile["1_hired_at"] && profile["4_hiring_unit_name"]);
 }
 
-// --- Jobcode / trans-code rules ---------------------------------------
+// --- Jobcode / trans-code rules (shared across every employee) ---------
 
-function loadJobcodeRules(employeeKey) {
-  const emp = getEmployee(employeeKey);
-  return emp ? { ...emp.jobcode_rules } : {};
-}
-
-function saveJobcodeRules(employeeKey, rules) {
-  updateEmployee(employeeKey, { jobcode_rules: rules });
-  renderRulesView(employeeKey);
-}
-
-function loadTransCodeRules(employeeKey) {
-  const emp = getEmployee(employeeKey);
-  return emp && emp.trans_code_rules ? { ...emp.trans_code_rules } : { ...DEFAULT_TRANS_RULES };
-}
-
-function saveTransCodeRules(employeeKey, rules) {
-  updateEmployee(employeeKey, { trans_code_rules: rules });
-  renderRulesView(employeeKey);
-}
-
-function renderRulesView(employeeKey) {
-  if (!employeeKey) {
-    jobcodeRulesView.textContent = "(upload a paystub to see an employee's saved rules)";
-    transCodeRulesView.textContent = "";
-    return;
+function loadJobcodeRules() {
+  try {
+    return JSON.parse(localStorage.getItem(SHARED_JOBCODE_RULES_KEY) || "{}");
+  } catch {
+    return {};
   }
-  const jobcodeRules = loadJobcodeRules(employeeKey);
-  jobcodeRulesView.textContent = Object.keys(jobcodeRules).length
-    ? JSON.stringify(jobcodeRules, null, 2)
-    : "(none yet)";
-  transCodeRulesView.textContent = JSON.stringify(loadTransCodeRules(employeeKey), null, 2);
+}
+
+function saveJobcodeRules(rules) {
+  try {
+    localStorage.setItem(SHARED_JOBCODE_RULES_KEY, JSON.stringify(rules));
+  } catch {
+    // localStorage unavailable — non-fatal
+  }
+  renderRulesView();
+}
+
+function loadTransCodeRules() {
+  try {
+    const raw = localStorage.getItem(SHARED_TRANS_CODE_RULES_KEY);
+    return raw ? JSON.parse(raw) : { ...DEFAULT_TRANS_RULES };
+  } catch {
+    return { ...DEFAULT_TRANS_RULES };
+  }
+}
+
+function saveTransCodeRules(rules) {
+  try {
+    localStorage.setItem(SHARED_TRANS_CODE_RULES_KEY, JSON.stringify(rules));
+  } catch {
+    // localStorage unavailable — non-fatal
+  }
+  renderRulesView();
+}
+
+function jobcodeRuleSummary(rule) {
+  if (rule.include === false) {
+    return `Excluded${rule.note ? " — " + rule.note : ""}`;
+  }
+  const bits = [rule.incident_name || rule.group || "(no incident name)"];
+  bits.push(`acct ${rule.accounting_code || "—"}`);
+  if (rule.fire_code) bits.push(`fire ${rule.fire_code}`);
+  return bits.join(" · ");
+}
+
+function transCodeRuleSummary(rule) {
+  if (rule.include) return `Included as worked hours${rule.note ? " — " + rule.note : ""}`;
+  if (rule.flag) return `Excluded, flags matching hours ${rule.flag}${rule.note ? " — " + rule.note : ""}`;
+  return `Excluded entirely${rule.note ? " — " + rule.note : ""}`;
+}
+
+function renderRuleRow(container, code, summary, onEdit, onDelete) {
+  const row = document.createElement("div");
+  row.className = "ruleRow";
+  const main = document.createElement("div");
+  main.className = "ruleRow-main";
+  main.innerHTML = `<span class="ruleRow-code">${code}</span><span class="ruleRow-summary"></span>`;
+  main.querySelector(".ruleRow-summary").textContent = summary;
+  const actions = document.createElement("div");
+  actions.className = "ruleRow-actions";
+  const editBtn = document.createElement("button");
+  editBtn.className = "linklike";
+  editBtn.textContent = "Edit";
+  editBtn.addEventListener("click", onEdit);
+  const deleteBtn = document.createElement("button");
+  deleteBtn.className = "linklike danger";
+  deleteBtn.textContent = "Delete";
+  deleteBtn.addEventListener("click", onDelete);
+  actions.append(editBtn, deleteBtn);
+  row.append(main, actions);
+  container.appendChild(row);
+}
+
+function renderRulesView() {
+  const jobcodeRules = loadJobcodeRules();
+  jobcodeRulesView.innerHTML = "";
+  const jobcodes = Object.keys(jobcodeRules).sort();
+  if (!jobcodes.length) {
+    jobcodeRulesView.innerHTML = '<p class="hint">(none yet)</p>';
+  } else {
+    for (const code of jobcodes) {
+      renderRuleRow(
+        jobcodeRulesView,
+        code,
+        jobcodeRuleSummary(jobcodeRules[code]),
+        () => openJobcodeEditForm(code, jobcodeRules[code]),
+        () => {
+          if (!confirm(`Delete the saved rule for jobcode ${code}? This can't be undone.`)) return;
+          const rules = loadJobcodeRules();
+          delete rules[code];
+          saveJobcodeRules(rules);
+        }
+      );
+    }
+  }
+
+  const transCodeRules = loadTransCodeRules();
+  transCodeRulesView.innerHTML = "";
+  for (const code of Object.keys(transCodeRules).sort()) {
+    renderRuleRow(
+      transCodeRulesView,
+      code,
+      transCodeRuleSummary(transCodeRules[code]),
+      () => openTransCodeEditForm(code, transCodeRules[code]),
+      () => {
+        if (!confirm(`Delete the saved rule for trans code ${code}? This can't be undone.`)) return;
+        const rules = loadTransCodeRules();
+        delete rules[code];
+        saveTransCodeRules(rules);
+      }
+    );
+  }
+}
+
+function openJobcodeEditForm(code, rule) {
+  resolvePanel.style.display = "block";
+  resolvePanel.innerHTML = `
+    <h3>Edit jobcode ${code}</h3>
+    <div class="row">
+      <label>Treatment
+        <select id="ef_treatment">
+          <option value="include">Incident time</option>
+          <option value="exclude">Not incident time (excluded)</option>
+        </select>
+      </label>
+    </div>
+    <div class="row" id="ef_incident_fields">
+      ${INCIDENT_FIELDS.map(([, key, label, placeholder]) => `
+        <label>${label}<input id="ef_${key}" placeholder="${placeholder}"></label>`).join("")}
+    </div>
+    <div class="actions">
+      <button id="ef_save">Save</button>
+      <button id="ef_cancel" class="secondary">Cancel</button>
+    </div>
+  `;
+  const treatmentSelect = document.getElementById("ef_treatment");
+  const fieldsRow = document.getElementById("ef_incident_fields");
+  treatmentSelect.value = rule.include === false ? "exclude" : "include";
+  fieldsRow.style.display = treatmentSelect.value === "exclude" ? "none" : "flex";
+  treatmentSelect.addEventListener("change", () => {
+    fieldsRow.style.display = treatmentSelect.value === "exclude" ? "none" : "flex";
+  });
+  for (const [, key] of INCIDENT_FIELDS) {
+    document.getElementById(`ef_${key}`).value = rule[key] || "";
+  }
+
+  document.getElementById("ef_save").addEventListener("click", () => {
+    const rules = loadJobcodeRules();
+    if (treatmentSelect.value === "exclude") {
+      rules[code] = { include: false, note: rule.note || "Excluded via rules manager." };
+    } else {
+      const values = {};
+      for (const [, key] of INCIDENT_FIELDS) {
+        values[key] = document.getElementById(`ef_${key}`).value.trim();
+      }
+      const preserved = rule.trans_overrides ? { trans_overrides: rule.trans_overrides } : {};
+      rules[code] = { include: true, group: values.incident_name, ...values, ...preserved };
+    }
+    saveJobcodeRules(rules);
+    resolvePanel.style.display = "none";
+  });
+  document.getElementById("ef_cancel").addEventListener("click", () => {
+    resolvePanel.style.display = "none";
+  });
+}
+
+function openTransCodeEditForm(code, rule) {
+  resolvePanel.style.display = "block";
+  resolvePanel.innerHTML = `
+    <h3>Edit trans code ${code}</h3>
+    <div class="row">
+      <label>Treatment
+        <select id="ef_treatment">
+          <option value="include">Include as worked hours</option>
+          <option value="flag_H">Exclude, but flag the matching hours as H (hazard pay)</option>
+          <option value="flag_T">Exclude, but flag the matching hours as T (travel)</option>
+          <option value="flag_E">Exclude, but flag the matching hours as E (environmental differential)</option>
+          <option value="exclude">Exclude entirely — not incident time</option>
+        </select>
+      </label>
+    </div>
+    <div class="actions">
+      <button id="ef_save">Save</button>
+      <button id="ef_cancel" class="secondary">Cancel</button>
+    </div>
+  `;
+  const treatmentSelect = document.getElementById("ef_treatment");
+  treatmentSelect.value = rule.include ? "include" : rule.flag ? `flag_${rule.flag}` : "exclude";
+
+  document.getElementById("ef_save").addEventListener("click", () => {
+    const treatment = treatmentSelect.value;
+    const rules = loadTransCodeRules();
+    if (treatment === "include") {
+      rules[code] = { include: true, note: rule.note || "Edited via rules manager" };
+    } else if (treatment === "exclude") {
+      rules[code] = { include: false, note: rule.note || "Edited via rules manager" };
+    } else {
+      const flag = treatment.split("_")[1];
+      rules[code] = { include: false, flag, note: rule.note || "Edited via rules manager" };
+    }
+    saveTransCodeRules(rules);
+    resolvePanel.style.display = "none";
+  });
+  document.getElementById("ef_cancel").addEventListener("click", () => {
+    resolvePanel.style.display = "none";
+  });
 }
 
 resetRulesBtn.addEventListener("click", () => {
-  if (!currentEmployeeKey) return;
-  if (!confirm(`Reset all saved incident/trans-code rules for ${currentEmployeeKey}? This can't be undone.`)) return;
-  updateEmployee(currentEmployeeKey, { jobcode_rules: {}, trans_code_rules: { ...DEFAULT_TRANS_RULES } });
-  renderRulesView(currentEmployeeKey);
+  if (!confirm("Reset ALL saved incident/trans-code rules? This affects every employee in this browser and can't be undone.")) return;
+  saveJobcodeRules({});
+  saveTransCodeRules({ ...DEFAULT_TRANS_RULES });
 });
 
 // --- Drag & drop ----------------------------------------------------------
@@ -247,7 +448,8 @@ let pyodide;
 let currentEmployeeKey = null;
 
 async function boot() {
-  renderRulesView(null);
+  migrateEmployeeScopedRulesToShared();
+  renderRulesView();
   try {
     setStatus(pick(FLAVOR.boot));
     pyodide = await loadPyodide();
@@ -255,11 +457,11 @@ async function boot() {
     setStatus(pick(FLAVOR.install));
     await pyodide.loadPackage("micropip");
     const micropip = pyodide.pyimport("micropip");
-    await micropip.install(["pypdf", "pdfminer.six"]);
+    await micropip.install(["pdfminer.six", "openpyxl"]);
 
     setStatus(pick(FLAVOR.briefing));
     for (const path of [...SHARED_ASSETS, ...LOCAL_ASSETS]) {
-      const resp = await fetch(path);
+      const resp = await fetch(encodeURI(path));
       if (!resp.ok) {
         throw new Error(`Failed to fetch ${path}: ${resp.status} ${resp.statusText}`);
       }
@@ -296,7 +498,10 @@ def _run():
 try:
     result = _run()
 except Exception:
-    result = {"ok": False, "error": traceback.format_exc()}
+    # Anything that can go wrong at this stage means this file doesn't
+    # look like a Paycheck8 Time & Attendance PDF — not necessarily a bug.
+    # Keep the traceback for our own debugging, but don't show it to the user.
+    result = {"ok": False, "debug": traceback.format_exc()}
 json.dumps(result)
 `);
   return JSON.parse(nameJson);
@@ -320,7 +525,8 @@ async function convert() {
     setStatus(pick(FLAVOR.detecting));
     const detected = await detectEmployeeName();
     if (!detected.ok) {
-      setResult("Could not read this paystub:\n" + detected.error, true);
+      console.error(detected.debug);
+      setResult("This doesn't look like a Paycheck8 paystub. Please upload a Paycheck8 Time & Attendance PDF.", true);
       return;
     }
 
@@ -336,7 +542,6 @@ async function convert() {
     if (switchingEmployee) {
       loadProfileIntoForm(currentEmployeeKey);
     }
-    renderRulesView(currentEmployeeKey);
     employeeBanner.textContent = `Employee: ${detected.name}`;
     employeeBanner.style.display = "block";
 
@@ -350,21 +555,22 @@ async function convert() {
     }
 
     pyodide.FS.writeFile("/profile.json", new TextEncoder().encode(JSON.stringify(profile)));
-    pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules(currentEmployeeKey))));
-    pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules(currentEmployeeKey))));
+    pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules())));
+    pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules())));
 
     setStatus(pick(FLAVOR.digging));
     const resultJson = await pyodide.runPythonAsync(`
 import json, traceback
 
 def _run():
-    import pdfminer_words, paycheck8_parser, of288_filler
+    import pdfminer_words, paycheck8_parser, of288_filler, of288_excel_filler
 
     words = pdfminer_words.extract_words("/paystub.pdf")
     stub, _ = paycheck8_parser.parse_from_words(words)
 
     jobcode_rules = json.load(open("/jobcode_rules.json"))
     trans_code_rules = json.load(open("/trans_code_rules.json"))
+    profile = json.load(open("/profile.json"))
 
     try:
         groups, reserved = of288_filler.build_groups(stub, jobcode_rules, trans_code_rules)
@@ -381,8 +587,8 @@ def _run():
         }
 
     try:
-        out_paths, used_columns, grand_total = of288_filler.fill(
-            stub, groups, reserved, "/OF288-Fillable.pdf", "/field_map.json", "/profile.json", "/output.pdf"
+        out_paths, grand_total = of288_excel_filler.fill(
+            stub, groups, reserved, "/OF288 Excel Blank Template.xlsx", profile, "/output.xlsx"
         )
     except of288_filler.ScheduleAllocationError as e:
         return {"ok": False, "error": str(e)}
@@ -432,11 +638,11 @@ json.dumps(result)
     const base = `OF288_PP${result.pay_period_number}_${result.year}`;
     result.out_paths.forEach((path, i) => {
       const data = pyodide.FS.readFile(path);
-      const blob = new Blob([data], { type: "application/pdf" });
+      const blob = new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = i === 0 ? `${base}.pdf` : `${base}_page${i + 1}.pdf`;
+      a.download = i === 0 ? `${base}.xlsx` : `${base}_page${i + 1}.xlsx`;
       a.textContent = "Download " + a.download;
       downloadsEl.appendChild(a);
     });
@@ -478,7 +684,7 @@ const INCIDENT_FIELDS = [
 ];
 
 function renderJobcodeResolveForm(info) {
-  const jobcodeRules = loadJobcodeRules(currentEmployeeKey);
+  const jobcodeRules = loadJobcodeRules();
   const existingByName = {};
   for (const rule of Object.values(jobcodeRules)) {
     if (rule.incident_name) existingByName[rule.incident_name] = rule;
@@ -528,14 +734,14 @@ ${formatHoursByDate(info.hours_by_date)}</div>
       return;
     }
     jobcodeRules[info.jobcode] = { include: true, group: values.incident_name, ...values };
-    saveJobcodeRules(currentEmployeeKey, jobcodeRules);
+    saveJobcodeRules(jobcodeRules);
     resolvePanel.style.display = "none";
     convert();
   });
 
   document.getElementById("rf_exclude").addEventListener("click", () => {
     jobcodeRules[info.jobcode] = { include: false, note: "Excluded via web UI — not incident time." };
-    saveJobcodeRules(currentEmployeeKey, jobcodeRules);
+    saveJobcodeRules(jobcodeRules);
     resolvePanel.style.display = "none";
     convert();
   });
@@ -566,7 +772,7 @@ ${formatHoursByDate(info.hours_by_date)}</div>
 
   document.getElementById("rf_save").addEventListener("click", () => {
     const treatment = document.getElementById("rf_treatment").value;
-    const transRules = loadTransCodeRules(currentEmployeeKey);
+    const transRules = loadTransCodeRules();
     if (treatment === "include") {
       transRules[info.trans_code] = { include: true, note: "Added via web UI" };
     } else if (treatment === "exclude") {
@@ -575,7 +781,7 @@ ${formatHoursByDate(info.hours_by_date)}</div>
       const flag = treatment.split("_")[1];
       transRules[info.trans_code] = { include: false, flag, note: "Added via web UI" };
     }
-    saveTransCodeRules(currentEmployeeKey, transRules);
+    saveTransCodeRules(transRules);
     resolvePanel.style.display = "none";
     convert();
   });
