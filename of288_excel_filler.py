@@ -33,6 +33,7 @@ from of288_filler import allocate_rows
 
 FONT_NAME = "Calibri"
 FONT_SIZE = 12
+FONT_BOLD = False
 GRID_ROWS = 8
 GRID_FIRST_ROW = 20
 YEAR_TOTAL_ROW = 28
@@ -125,7 +126,7 @@ COLUMN_MAPS = {col: _build_column_map(base) for col, base in BLOCK_BASE_COL.item
 def _set(ws, coord, value):
     cell = ws[coord]
     cell.value = value
-    cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=True)
+    cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=FONT_BOLD)
 
 
 def _plan_column_assignments(groups, rows_by_group):

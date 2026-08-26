@@ -11,8 +11,11 @@ silently guessing, since this is payroll-adjacent data.
 import json
 from itertools import permutations
 
-from pypdf import PdfReader, PdfWriter
-from pypdf.generic import DictionaryObject, NameObject, RectangleObject
+# pypdf is only needed by the PDF-output path below (_ensure_bold_font,
+# _enlarge_grid_rects, _fill_one_page/fill) — build_groups/allocate_rows,
+# used by both the PDF and Excel fillers, have no PDF dependency at all.
+# Imported lazily inside those functions so importing this module (e.g. from
+# the browser build, which only uses the Excel path) doesn't require pypdf.
 
 TYPE_OF_EMPLOYMENT_EXPORT_VALUES = {"Casual": "1", "Federal": "0", "Other": "2"}
 
@@ -48,6 +51,8 @@ def _ensure_bold_font(writer):
     template only ships Helv/Tahoma/ZaDb, none bold, so this adds one
     rather than trying to fake bold with the existing (non-bold) fonts.
     """
+    from pypdf.generic import DictionaryObject, NameObject
+
     font_dict = DictionaryObject({
         NameObject("/Type"): NameObject("/Font"),
         NameObject("/Subtype"): NameObject("/Type1"),
@@ -90,6 +95,34 @@ def _load_json(path):
         return json.load(fh)
 
 
+def _bp_swapped(jobcode):
+    """Paycheck8 codes the same incident assignment as two jobcodes that
+    differ only in their leading letter — B (base-8) and P (premium) — for
+    what is, for OF-288 purposes, identical incident time. Returns the
+    other variant, or None if this jobcode isn't a B/P code at all.
+    """
+    if not jobcode:
+        return None
+    if jobcode[0] == "B":
+        return "P" + jobcode[1:]
+    if jobcode[0] == "P":
+        return "B" + jobcode[1:]
+    return None
+
+
+def _lookup_jobcode(jobcode_rules, jobcode):
+    """Look up a jobcode's rule, falling back to its B/P-swapped variant so
+    resolving one variant (e.g. B2EK4Q26) automatically covers the other
+    (P2EK4Q26) without asking twice.
+    """
+    if jobcode in jobcode_rules:
+        return jobcode_rules[jobcode]
+    swapped = _bp_swapped(jobcode)
+    if swapped is not None:
+        return jobcode_rules.get(swapped)
+    return None
+
+
 def build_groups(paystub, jobcode_rules, trans_code_rules):
     """Group paystub line items into per-incident daily hours.
 
@@ -113,7 +146,7 @@ def build_groups(paystub, jobcode_rules, trans_code_rules):
     groups = {}
     reserved = {}
     for line in paystub.lines:
-        job_cfg = jobcode_rules.get(line.jobcode)
+        job_cfg = _lookup_jobcode(jobcode_rules, line.jobcode)
         if job_cfg is None:
             raise UnrecognizedCodeError(
                 f"Unrecognized jobcode '{line.jobcode}' (override {line.override}, "
@@ -338,6 +371,8 @@ def _enlarge_grid_rects(writer, field_map):
     whitespace between rows. Stretch each cell's box into that margin so a
     bigger font fits without clipping.
     """
+    from pypdf.generic import NameObject, RectangleObject
+
     grid_field_names = set()
     for col in COLUMN_LETTERS:
         for row in field_map["columns"][col]["grid"]:
@@ -352,6 +387,8 @@ def _enlarge_grid_rects(writer, field_map):
 
 
 def _fill_one_page(paystub, profile, field_map, page_assignments, template_path):
+    from pypdf import PdfReader, PdfWriter
+
     values = {}
     checkboxes = {}
 
