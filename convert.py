@@ -30,7 +30,10 @@ def main():
     ap.add_argument("-o", "--out", default=None)
     args = ap.parse_args()
 
-    paystub, _ = paycheck8_parser.parse(args.paystub_pdf)
+    try:
+        paystub, _ = paycheck8_parser.parse(args.paystub_pdf)
+    except paycheck8_parser.TotalHoursMismatchError as e:
+        raise SystemExit(f"Cannot convert: {e}")
     jobcode_rules = _load_rules(JOBCODE_RULES)
     trans_code_rules = _load_rules(TRANS_CODE_RULES)
     profile = _load_rules(PROFILE)

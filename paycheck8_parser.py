@@ -28,6 +28,20 @@ FROM_TO_X_MIN, FROM_TO_X_MAX = 138, 146
 MAX_COLUMN_DISTANCE = 12
 
 
+class TotalHoursMismatchError(ValueError):
+    """Raised when the sum of every hours value actually extracted from the
+    daily-hours grid doesn't match the paystub's own printed 'Total Hours'
+    field. This is a parsing-completeness check, not a business-logic one —
+    it catches a row the geometry-based extraction missed (or double-
+    counted) due to a layout quirk, before that silently becomes an
+    under-reported OF-288 with no warning.
+    """
+    def __init__(self, message, *, printed_total, captured_total):
+        super().__init__(message)
+        self.printed_total = printed_total
+        self.captured_total = captured_total
+
+
 @dataclass
 class PaystubLine:
     override: str
@@ -66,6 +80,14 @@ def _hhmm_to_minutes(s):
     return int(s[:2]) * 60 + int(s[2:])
 
 
+def _segment_hours(start, stop):
+    start_min = _hhmm_to_minutes(start)
+    stop_min = _hhmm_to_minutes(stop)
+    if stop_min < start_min:
+        stop_min += 24 * 60  # overnight shift crossing midnight (e.g. 2200 -> 0600)
+    return (stop_min - start_min) / 60
+
+
 def _extract_clock_segments(words, columns):
     """The 'Clock Hours' table is a stack of From/To row-pairs (one pair per
     on-shift block that day: regular hours, then any later blocks split off
@@ -98,7 +120,7 @@ def _extract_clock_segments(words, columns):
             stop = to_vals.get(d)
             if stop is None:
                 continue
-            hours = (_hhmm_to_minutes(stop) - _hhmm_to_minutes(start)) / 60
+            hours = _segment_hours(start, stop)
             segments_by_date.setdefault(d, []).append(ClockSegment(start, stop, hours))
 
     for d in segments_by_date:
@@ -159,11 +181,21 @@ def parse_from_words(words):
     date_header_words.sort(key=lambda w: w["x0"])
 
     columns = []  # (date, x0)
+    current_year = period_start.year
+    prev_mo_day = None
     for w in date_header_words:
         m = DATE_HDR_RE.match(w["text"])
         mo, day = int(m.group(1)), int(m.group(2))
-        # weeks may cross a year boundary in theory; assume `year` for both
-        columns.append((date(year, mo, day), w["x0"]))
+        # A pay period's date-header columns run forward in time (they're
+        # sorted by x0 above, which matches chronological order); if the
+        # month/day goes backwards (e.g. 12/31 -> 1/1) the header has
+        # crossed into the next calendar year. Seeded from period_start's
+        # real 4-digit year rather than the single `year` field, which
+        # would otherwise mislabel every date after the rollover.
+        if prev_mo_day is not None and (mo, day) < prev_mo_day:
+            current_year += 1
+        columns.append((date(current_year, mo, day), w["x0"]))
+        prev_mo_day = (mo, day)
 
     grid_top = header_top
 
@@ -200,6 +232,16 @@ def parse_from_words(words):
             hours_by_date[d] = val
 
         lines.append(PaystubLine(override, jobcode, trans_code, hours_by_date))
+
+    captured_total = sum(h for line in lines for h in line.hours_by_date.values())
+    if abs(captured_total - total_hours) > 0.01:
+        raise TotalHoursMismatchError(
+            f"Parsed {captured_total:g} hours from the daily-hours grid, but the paystub's own "
+            f"'Total Hours' field says {total_hours:g}. This usually means a row didn't extract "
+            f"cleanly — treat this pay period as needing manual review rather than trusting the "
+            f"conversion.",
+            printed_total=total_hours, captured_total=captured_total,
+        )
 
     clock_segments = _extract_clock_segments(words, columns)
 
