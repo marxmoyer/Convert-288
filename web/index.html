@@ -187,7 +187,20 @@
   .privacyNote {
     margin-top: 1rem; background: #eef4ee; border: 1px solid var(--fs-green-light); color: var(--fs-green-dark);
   }
+  .privacyBody { flex: 1; min-width: 0; }
+  .privacyHeadline { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; }
+  .privacyHeadline strong { margin-bottom: 0; }
   .privacyDetails:not([hidden]) { display: block; margin-top: 0.35rem; }
+  .privacyToggleBtn {
+    background: none; border: none; padding: 0; margin: 0; color: #8a9184; font-size: 0.78rem;
+    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+  }
+  /* button.privacyToggleBtn:hover (not just .privacyToggleBtn:hover) to match
+     the specificity of the global button:hover:not(:disabled) background
+     rule above — otherwise that rule wins and paints a dark green
+     background behind this button's dark green hover text, making it
+     invisible. */
+  button.privacyToggleBtn:hover { background: none; color: var(--fs-green-dark); text-decoration: underline; }
   .privacyNote #privacyToggle { margin-top: 0.4rem; }
 
   #storageWarning {
@@ -216,16 +229,18 @@
 
     <div class="privacyNote calloutBox">
       <span class="icon">🔒</span>
-      <span>
-        <strong>Your paystub never leaves this computer.</strong>
+      <div class="privacyBody">
+        <div class="privacyHeadline">
+          <strong>Your paystub never leaves this computer.</strong>
+          <button type="button" id="privacyToggle" class="privacyToggleBtn">Show more</button>
+        </div>
         <span id="privacyDetails" class="privacyDetails" hidden>
           Everything — reading the PDF, filling out the form, saving your info for next time — happens right here in
           this browser tab. There's no server on the other end to send it to, not even ours. Nothing is uploaded,
           emailed, or stored anywhere but this device. Once this page has finished loading (the box below says
           "Ready"), you could turn off your Wi-Fi entirely and it would keep working.
         </span>
-        <button type="button" id="privacyToggle" class="linklike">Show more</button>
-      </span>
+      </div>
     </div>
 
     <div id="employeeBanner" style="display:none"></div>
