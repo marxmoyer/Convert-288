@@ -764,6 +764,11 @@ def _run():
             },
         }
 
+    # TODO(casual-ad-reprompt): re-prompt for AD Class/Rate on an existing
+    # jobcode rule that predates this employee being marked Casual — design
+    # still being worked out, deferred for now. New jobcodes already
+    # capture AD Class/Rate directly (see the resolve form below).
+
     try:
         out_paths, grand_total = of288_excel_filler.fill(
             stub, groups, reserved, "/OF288 Excel Blank Template.xlsx", profile, "/output.xlsx"
@@ -1074,7 +1079,16 @@ const INCIDENT_FIELDS = [
   ["rf_resource_request", "resource_request_number", "Resource request number", "e.g. O-33"],
   ["rf_position_code", "position_code", "Position code", "e.g. FFT1"],
   ["rf_acct", "accounting_code", "Accounting code", "e.g. 1542"],
+  // Casual/AD-hire only — shown conditionally, see CASUAL_ONLY_FIELD_KEYS below.
+  ["rf_ad_class", "ad_class", "AD Class", "e.g. B"],
+  ["rf_ad_rate", "ad_rate", "AD Rate", "e.g. 20.50"],
 ];
+
+const CASUAL_ONLY_FIELD_KEYS = new Set(["ad_class", "ad_rate"]);
+
+function currentEmploymentTypeIsCasual() {
+  return document.getElementById("p_type").value === "Casual";
+}
 
 function renderJobcodeResolveForm(info) {
   const jobcodeRules = loadJobcodeRules();
@@ -1091,8 +1105,8 @@ function renderJobcodeResolveForm(info) {
     already used and the rest fills in automatically.) None of this is guessable from the paystub —
     it comes from the resource order.</p>
     <div class="row">
-      ${INCIDENT_FIELDS.map(([id, , label, placeholder]) => `
-        <label>${label}
+      ${INCIDENT_FIELDS.map(([id, key, label, placeholder]) => `
+        <label${CASUAL_ONLY_FIELD_KEYS.has(key) ? ' class="casualOnly"' : ""}>${label}
           ${id === "rf_incident_name"
             ? `<input id="${id}" list="rf_incident_list" placeholder="${placeholder}">
                <datalist id="rf_incident_list">${existingNames.map((n) => `<option value="${n}">`).join("")}</datalist>`
@@ -1111,6 +1125,11 @@ function renderJobcodeResolveForm(info) {
     `Override/accounting code on paystub: ${info.override}\n` +
     `Trans code: ${info.trans_code}\n` +
     `Hours found on:\n${formatHoursByDate(info.hours_by_date)}`;
+
+  // AD Class/Rate only apply to Casual (AD) hires — hide them otherwise.
+  if (!currentEmploymentTypeIsCasual()) {
+    resolvePanel.querySelectorAll(".casualOnly").forEach((el) => { el.style.display = "none"; });
+  }
 
   const nameInput = document.getElementById("rf_incident_name");
   nameInput.addEventListener("input", () => {

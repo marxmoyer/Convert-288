@@ -26,6 +26,7 @@ TYPE_OF_EMPLOYMENT_EXPORT_VALUES = {"Casual": "1", "Federal": "0", "Other": "2"}
 INCIDENT_META_FIELDS = [
     "accounting_code", "incident_name", "incident_order_number",
     "fire_code", "resource_request_number", "position_code",
+    "ad_class", "ad_rate",
 ]
 
 # The template's text fields default to a 5.5-6.8pt Tahoma appearance, and
