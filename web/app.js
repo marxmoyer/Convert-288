@@ -822,7 +822,8 @@ json.dumps(result)
     }
 
     setResultCard(result);
-    const base = `OF288_PP${result.pay_period_number}_${result.year}`;
+    const possessiveName = result.employee_name.endsWith("s") ? `${result.employee_name}'` : `${result.employee_name}'s`;
+    const base = `${possessiveName} PP${result.pay_period_number} OF288`;
     result.out_paths.forEach((path, i) => {
       const data = pyodide.FS.readFile(path);
       const blob = new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
