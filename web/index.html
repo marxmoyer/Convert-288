@@ -206,6 +206,8 @@
   .privacyNote {
     margin-top: 1rem; background: #eef4ee; border: 1px solid var(--fs-green-light); color: var(--fs-green-dark);
   }
+  .privacyDetails:not([hidden]) { display: block; margin-top: 0.35rem; }
+  .privacyNote #privacyToggle { margin-top: 0.4rem; }
 
   #storageWarning {
     margin-bottom: 1rem; background: #fdf3e0; border: 1px solid var(--fs-tan); color: #6b4a1a;
@@ -237,10 +239,13 @@
       <span class="icon">🔒</span>
       <span>
         <strong>Your paystub never leaves this computer.</strong>
-        Everything — reading the PDF, filling out the form, saving your info for next time — happens right here in
-        this browser tab. There's no server on the other end to send it to, not even ours. Nothing is uploaded,
-        emailed, or stored anywhere but this device. Once this page has finished loading (the box below says
-        "Ready"), you could turn off your Wi-Fi entirely and it would keep working.
+        <span id="privacyDetails" class="privacyDetails" hidden>
+          Everything — reading the PDF, filling out the form, saving your info for next time — happens right here in
+          this browser tab. There's no server on the other end to send it to, not even ours. Nothing is uploaded,
+          emailed, or stored anywhere but this device. Once this page has finished loading (the box below says
+          "Ready"), you could turn off your Wi-Fi entirely and it would keep working.
+        </span>
+        <button type="button" id="privacyToggle" class="linklike">Show more</button>
       </span>
     </div>
 
@@ -254,8 +259,8 @@
         <label>Type of Employment
           <select id="p_type">
             <option value="Federal">Federal</option>
-            <option value="Casual">Casual</option>
-            <option value="Other">Other</option>
+            <option value="Casual" disabled>Casual (coming soon)</option>
+            <option value="Other" disabled>Other (coming soon)</option>
           </select>
         </label>
       </div>

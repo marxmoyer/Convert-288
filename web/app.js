@@ -558,6 +558,14 @@ resetRulesBtn.addEventListener("click", guard(() => {
   saveTransCodeRules({ ...DEFAULT_TRANS_RULES });
 }));
 
+const privacyDetailsEl = document.getElementById("privacyDetails");
+const privacyToggleBtn = document.getElementById("privacyToggle");
+privacyToggleBtn.addEventListener("click", guard(() => {
+  const nowHidden = !privacyDetailsEl.hidden;
+  privacyDetailsEl.hidden = nowHidden;
+  privacyToggleBtn.textContent = nowHidden ? "Show more" : "Show less";
+}));
+
 // --- Drag & drop ----------------------------------------------------------
 
 function setSelectedFiles(files) {
