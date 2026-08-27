@@ -163,10 +163,10 @@ const FLAVOR = {
     "Doing the LCES check…", "Mopping up…", "Reading the 214…",
   ],
   ready: [
-    "Anchor point secured — drop a paystub above.",
-    "Staged and ready for dispatch — drop a paystub above.",
-    "Holding at the trailhead — drop a paystub above when you're ready.",
-    "Crew's briefed and standing by — drop a paystub above.",
+    "Anchor point secured — drop a T&A Report above.",
+    "Staged and ready for dispatch — drop a T&A Report above.",
+    "Holding at the trailhead — drop a T&A Report above when you're ready.",
+    "Crew's briefed and standing by — drop a T&A Report above.",
   ],
 };
 
@@ -682,7 +682,7 @@ json.dumps(result)
 async function convert() {
   const file = fileInput.files[0];
   if (!file) {
-    setResult("Choose a paystub PDF first.", true);
+    setResult("Choose a T&A Report PDF first.", true);
     return;
   }
 
@@ -704,7 +704,7 @@ async function convert() {
         setResult(detected.message, true);
       } else {
         console.error(detected.debug);
-        setResult("This doesn't look like a Paycheck8 paystub. Please upload a Paycheck8 Time & Attendance PDF.", true);
+        setResult("This doesn't look like a Paycheck8 T&A Report. Please upload one.", true);
       }
       return;
     }
@@ -808,7 +808,7 @@ except Exception:
     # keep the traceback available in the console for real debugging.
     result = {
         "ok": False,
-        "error": "Something unexpected went wrong converting this paystub. "
+        "error": "Something unexpected went wrong converting this T&A Report. "
                  "Check the browser console for technical details, or try a different file.",
         "debug": traceback.format_exc(),
     }
@@ -892,7 +892,7 @@ function renderJobcodeResolveForm(info) {
     <h3 id="rf_header"></h3>
     <div class="details" id="rf_details"></div>
     <p class="hint">What incident is this for ${currentEmployeeKey}? (Type an incident name you've
-    already used and the rest fills in automatically.) None of this is guessable from the paystub —
+    already used and the rest fills in automatically.) None of this is guessable from the T&A Report —
     it comes from the resource order.</p>
     <div class="row">
       ${INCIDENT_FIELDS.map(([id, , label, placeholder]) => `
@@ -912,7 +912,7 @@ function renderJobcodeResolveForm(info) {
   // textContent, not interpolated into the innerHTML template above.
   document.getElementById("rf_header").textContent = `New jobcode found: ${info.jobcode}`;
   document.getElementById("rf_details").textContent =
-    `Override/accounting code on paystub: ${info.override}\n` +
+    `Override/accounting code on T&A Report: ${info.override}\n` +
     `Trans code: ${info.trans_code}\n` +
     `Hours found on:\n${formatHoursByDate(info.hours_by_date)}`;
 
