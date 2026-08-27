@@ -61,6 +61,7 @@ TOP_CELLS = {
 }
 
 REMARKS_CELL = "A38"
+ITEM17_TOTAL_CELL = "AB29"
 
 
 def _offset(base_letter, n):
@@ -109,6 +110,7 @@ def _build_column_map(base_letter):
             "day": f"{_offset(base_letter, grid_offsets['day'])}{row}",
             "start": f"{_offset(base_letter, grid_offsets['start'])}{row}",
             "stop": f"{_offset(base_letter, grid_offsets['stop'])}{row}",
+            "hours": f"{_offset(base_letter, grid_offsets['hours'])}{row}",
             "flag": f"{_offset(base_letter, grid_offsets['flag'])}{row}",
         })
     # Row 28's base column holds the static "Year" label; the actual
@@ -116,8 +118,12 @@ def _build_column_map(base_letter):
     # = "Year" (label), B28 = the year value, same +1 pattern for every
     # block). Writing to the base column would clobber the label instead.
     year_cell = f"{_offset(base_letter, 1)}{YEAR_TOTAL_ROW}"
+    # This column's "16. Total Hours" value cell shares the Hours column's
+    # letter, one row down (verified: column C's is U28, column D's AC28 —
+    # both match this same offset rule).
+    total_hours_cell = f"{_offset(base_letter, grid_offsets['hours'])}{YEAR_TOTAL_ROW}"
 
-    return {"meta": meta_cells, "grid": grid, "year": year_cell}
+    return {"meta": meta_cells, "grid": grid, "year": year_cell, "total_hours": total_hours_cell}
 
 
 COLUMN_MAPS = {col: _build_column_map(base) for col, base in BLOCK_BASE_COL.items()}
@@ -127,6 +133,15 @@ def _set(ws, coord, value):
     cell = ws[coord]
     cell.value = value
     cell.font = Font(name=FONT_NAME, size=FONT_SIZE, bold=FONT_BOLD)
+
+
+def _set_font_only(ws, coord):
+    """Style a cell without touching its value — for the Hours/Total Hours/
+    item-17 cells, which are live formulas we must never overwrite, but
+    which otherwise keep the template's own (differently-sized) font,
+    clashing with the Start/Stop cells right next to them.
+    """
+    ws[coord].font = Font(name=FONT_NAME, size=FONT_SIZE, bold=FONT_BOLD)
 
 
 def _plan_column_assignments(groups, rows_by_group):
@@ -181,6 +196,14 @@ def fill(paystub, groups, reserved, template_path, profile, out_path):
         # four up front so an unused column never shows a stale year.
         for cmap in COLUMN_MAPS.values():
             _set(ws, cmap["year"], paystub.year)
+            # Hours/Total Hours are live formulas (never written above),
+            # but still need the same font as everything else so the grid
+            # doesn't visually clash — applied to all four column blocks,
+            # used or not, so an unused column doesn't stand out either.
+            for field_row in cmap["grid"]:
+                _set_font_only(ws, field_row["hours"])
+            _set_font_only(ws, cmap["total_hours"])
+        _set_font_only(ws, ITEM17_TOTAL_CELL)
 
         page_total = 0.0
         first_col_on_page = {}
