@@ -6,7 +6,7 @@
 <!-- Belt-and-suspenders privacy control, not just a promise in the copy below:
      the browser itself will refuse any network request this page tries to make
      to a host that isn't one of these. Nothing here can talk to a server that
-     could receive your paystub even if a future bug tried to send it somewhere. -->
+     could receive your T&amp;A Report even if a future bug tried to send it somewhere. -->
 <meta http-equiv="Content-Security-Policy" content="
   default-src 'self';
   script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval' 'unsafe-eval';
@@ -238,21 +238,21 @@
       </svg>
     </div>
     <h1>Convert-288</h1>
-    <p>Paystub → OF-288 Incident Time Report</p>
+    <p>T&amp;A Report → OF-288 Incident Time Report</p>
   </header>
 
   <main>
     <div id="storageWarning" class="calloutBox" style="display:none"></div>
 
-    <p class="hint">Handles multiple employees: upload a paystub and it detects who it belongs to automatically.
-      Select or drop more than one paystub at once to batch-convert them — several pay periods for yourself, or
-      one paystub per crew member — and download every resulting OF-288 together as a single zip.</p>
+    <p class="hint">Handles multiple employees: upload a Paycheck8 T&amp;A Report and it detects who it belongs to automatically.
+      Select or drop more than one T&amp;A Report at once to batch-convert them — several pay periods for yourself, or
+      one T&amp;A Report per crew member — and download every resulting OF-288 together as a single zip.</p>
 
     <div class="privacyNote calloutBox">
       <span class="icon">🔒</span>
       <div class="privacyBody">
         <div class="privacyHeadline">
-          <strong>Your paystub never leaves this computer.</strong>
+          <strong>Your T&amp;A Report never leaves this computer.</strong>
           <button type="button" id="privacyToggle" class="privacyToggleBtn">Show more</button>
         </div>
         <span id="privacyDetails" class="privacyDetails" hidden>
@@ -286,7 +286,7 @@
     </fieldset>
 
     <div id="dropZone">
-      <p>Drag & drop one or more paystub PDFs here, or</p>
+      <p>Drag &amp; drop one or more T&amp;A Report PDFs here, or</p>
       <input type="file" id="fileInput" accept="application/pdf" multiple disabled>
       <p class="filename" id="dropFilename"></p>
     </div>
