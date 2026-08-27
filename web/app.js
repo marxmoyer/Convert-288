@@ -12,6 +12,8 @@ const transCodeRulesView = document.getElementById("transCodeRulesView");
 const resetRulesBtn = document.getElementById("resetRulesBtn");
 const employeeBanner = document.getElementById("employeeBanner");
 const storageWarningEl = document.getElementById("storageWarning");
+const batchProgressEl = document.getElementById("batchProgress");
+const batchSummaryEl = document.getElementById("batchSummary");
 
 // The page's own privacy copy promises "saved only in this browser" — if a
 // save ever silently no-ops (private-browsing storage restrictions, quota,
@@ -558,15 +560,25 @@ resetRulesBtn.addEventListener("click", guard(() => {
 
 // --- Drag & drop ----------------------------------------------------------
 
-function setSelectedFile(file) {
-  if (!file) return;
+function setSelectedFiles(files) {
+  if (!files || !files.length) return;
   const dt = new DataTransfer();
-  dt.items.add(file);
+  for (const file of files) dt.items.add(file);
   fileInput.files = dt.files;
-  dropFilename.textContent = file.name;
+  dropFilename.textContent = files.length === 1
+    ? files[0].name
+    : `${files.length} files selected`;
+  // A fresh selection means a fresh run — don't leave a previous batch's
+  // progress/summary sitting on screen next to files that haven't been
+  // touched yet. Left alone if a batch is actually mid-pause (e.g. the
+  // user is filling in a profile field, not picking new files).
+  if (!batchState) {
+    batchProgressEl.style.display = "none";
+    batchSummaryEl.innerHTML = "";
+  }
 }
 
-fileInput.addEventListener("change", () => setSelectedFile(fileInput.files[0]));
+fileInput.addEventListener("change", () => setSelectedFiles(fileInput.files));
 
 ["dragenter", "dragover"].forEach((evt) =>
   dropZone.addEventListener(evt, (e) => {
@@ -581,9 +593,9 @@ fileInput.addEventListener("change", () => setSelectedFile(fileInput.files[0]));
   })
 );
 dropZone.addEventListener("drop", (e) => {
-  const file = e.dataTransfer.files[0];
-  if (file && file.type === "application/pdf") {
-    setSelectedFile(file);
+  const files = [...e.dataTransfer.files].filter((f) => f.type === "application/pdf");
+  if (files.length) {
+    setSelectedFiles(files);
   } else {
     setResult("Please drop a PDF file.", true);
   }
@@ -671,66 +683,60 @@ json.dumps(result)
   return JSON.parse(nameJson);
 }
 
-async function convert() {
-  const file = fileInput.files[0];
-  if (!file) {
-    setResult("Choose a paystub PDF first.", true);
-    return;
+// Does everything needed to turn one paystub File into a result, up to (but
+// not including) presenting it — shared by single-file convert() and the
+// batch driver below, which each need to react to the same outcomes
+// (needs profile info, needs a jobcode/trans-code resolved, hard error, or
+// success) very differently.
+function possessiveName(name) {
+  return name.endsWith("s") ? `${name}'` : `${name}'s`;
+}
+
+function outputBaseName(result) {
+  return `${possessiveName(result.employee_name)} PP${result.pay_period_number} OF288`;
+}
+
+async function runConversionForCurrentFile(file) {
+  setStatus(pick(FLAVOR.reading));
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  pyodide.FS.writeFile("/paystub.pdf", bytes);
+
+  setStatus(pick(FLAVOR.detecting));
+  const detected = await detectEmployeeName();
+  if (!detected.ok) {
+    if (detected.kind === "hours_mismatch") {
+      return { status: "hours_mismatch", message: detected.message };
+    }
+    console.error(detected.debug);
+    return { status: "not_a_paystub" };
   }
 
-  resolvePanel.style.display = "none";
-  downloadsEl.innerHTML = "";
-  convertBtn.disabled = true;
-  const clearSlowWarning = startSlowWarning(
-    "Still working — this file may be unusually large or complex."
-  );
-  try {
-    setStatus(pick(FLAVOR.reading));
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    pyodide.FS.writeFile("/paystub.pdf", bytes);
+  const detectedKey = normalizeEmployeeKey(detected.name);
+  const switchingEmployee = detectedKey !== currentEmployeeKey;
+  currentEmployeeKey = detectedKey;
+  const isNewEmployee = getEmployee(currentEmployeeKey) === null;
+  ensureEmployee(currentEmployeeKey, detected.name);
+  // Only reload the form from storage when switching to a different
+  // employee than last time — otherwise this clobbers profile fields the
+  // user just typed in (e.g. filling in a brand-new employee's info and
+  // clicking Convert again to proceed) with the still-blank saved copy.
+  if (switchingEmployee) {
+    loadProfileIntoForm(currentEmployeeKey);
+  }
+  employeeBanner.textContent = `Employee: ${detected.name}`;
+  employeeBanner.style.display = "block";
 
-    setStatus(pick(FLAVOR.detecting));
-    const detected = await detectEmployeeName();
-    if (!detected.ok) {
-      if (detected.kind === "hours_mismatch") {
-        setResult(detected.message, true);
-      } else {
-        console.error(detected.debug);
-        setResult("This doesn't look like a Paycheck8 paystub. Please upload a Paycheck8 Time & Attendance PDF.", true);
-      }
-      return;
-    }
+  const profile = readProfileFromForm(currentEmployeeKey);
+  if (isNewEmployee || !profileLooksComplete(profile)) {
+    return { status: "needs_profile", detectedName: detected.name };
+  }
 
-    const detectedKey = normalizeEmployeeKey(detected.name);
-    const switchingEmployee = detectedKey !== currentEmployeeKey;
-    currentEmployeeKey = detectedKey;
-    const isNewEmployee = getEmployee(currentEmployeeKey) === null;
-    ensureEmployee(currentEmployeeKey, detected.name);
-    // Only reload the form from storage when switching to a different
-    // employee than last time — otherwise this clobbers profile fields the
-    // user just typed in (e.g. filling in a brand-new employee's info and
-    // clicking Convert again to proceed) with the still-blank saved copy.
-    if (switchingEmployee) {
-      loadProfileIntoForm(currentEmployeeKey);
-    }
-    employeeBanner.textContent = `Employee: ${detected.name}`;
-    employeeBanner.style.display = "block";
+  pyodide.FS.writeFile("/profile.json", new TextEncoder().encode(JSON.stringify(profile)));
+  pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules())));
+  pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules())));
 
-    const profile = readProfileFromForm(currentEmployeeKey);
-    if (isNewEmployee || !profileLooksComplete(profile)) {
-      setResult(
-        `New/incomplete profile for ${detected.name}. Fill in their info above ` +
-        `(at least Hired At and Hiring Unit Name), then click Convert again.`
-      );
-      return;
-    }
-
-    pyodide.FS.writeFile("/profile.json", new TextEncoder().encode(JSON.stringify(profile)));
-    pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules())));
-    pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules())));
-
-    setStatus(pick(FLAVOR.digging));
-    const resultJson = await pyodide.runPythonAsync(`
+  setStatus(pick(FLAVOR.digging));
+  const resultJson = await pyodide.runPythonAsync(`
 import json, traceback
 import paycheck8_parser
 
@@ -808,32 +814,75 @@ except Exception:
 json.dumps(result)
 `);
 
-    const result = JSON.parse(resultJson);
+  const result = JSON.parse(resultJson);
 
-    if (!result.ok && result.unrecognized) {
-      setResult("Needs your input before this can finish converting — see below.");
-      showResolvePanel(result.unrecognized);
-      return;
-    }
-    if (!result.ok) {
-      if (result.debug) console.error(result.debug);
-      setResult("Cannot convert:\n" + result.error, true);
-      return;
-    }
+  if (!result.ok && result.unrecognized) {
+    return { status: "needs_resolution", unrecognized: result.unrecognized };
+  }
+  if (!result.ok) {
+    if (result.debug) console.error(result.debug);
+    return { status: "error", message: result.error };
+  }
+  return { status: "ok", result };
+}
 
-    setResultCard(result);
-    const possessiveName = result.employee_name.endsWith("s") ? `${result.employee_name}'` : `${result.employee_name}'s`;
-    const base = `${possessiveName} PP${result.pay_period_number} OF288`;
-    result.out_paths.forEach((path, i) => {
-      const data = pyodide.FS.readFile(path);
-      const blob = new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = i === 0 ? `${base}.xlsx` : `${base}_page${i + 1}.xlsx`;
-      a.textContent = "Download " + a.download;
-      downloadsEl.appendChild(a);
-    });
+function offerDownload(filename, bytes, mimeType) {
+  const blob = new Blob([bytes], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.textContent = "Download " + filename;
+  downloadsEl.appendChild(a);
+}
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+async function convert() {
+  const file = fileInput.files[0];
+  if (!file) {
+    setResult("Choose a paystub PDF first.", true);
+    return;
+  }
+
+  resolvePanel.style.display = "none";
+  downloadsEl.innerHTML = "";
+  convertBtn.disabled = true;
+  const clearSlowWarning = startSlowWarning(
+    "Still working — this file may be unusually large or complex."
+  );
+  try {
+    const outcome = await runConversionForCurrentFile(file);
+    switch (outcome.status) {
+      case "hours_mismatch":
+        setResult(outcome.message, true);
+        break;
+      case "not_a_paystub":
+        setResult("This doesn't look like a Paycheck8 paystub. Please upload a Paycheck8 Time & Attendance PDF.", true);
+        break;
+      case "needs_profile":
+        setResult(
+          `New/incomplete profile for ${outcome.detectedName}. Fill in their info above ` +
+          `(at least Hired At and Hiring Unit Name), then click Convert again.`
+        );
+        break;
+      case "needs_resolution":
+        setResult("Needs your input before this can finish converting — see below.");
+        showResolvePanel(outcome.unrecognized);
+        break;
+      case "error":
+        setResult("Cannot convert:\n" + outcome.message, true);
+        break;
+      case "ok": {
+        setResultCard(outcome.result);
+        const base = outputBaseName(outcome.result);
+        outcome.result.out_paths.forEach((path, i) => {
+          const data = pyodide.FS.readFile(path);
+          offerDownload(i === 0 ? `${base}.xlsx` : `${base}_page${i + 1}.xlsx`, data, XLSX_MIME);
+        });
+        break;
+      }
+    }
   } catch (err) {
     console.error(err);
     setResult("Error: " + errorMessage(err), true);
@@ -841,6 +890,161 @@ json.dumps(result)
     convertBtn.disabled = false;
     clearSlowWarning();
   }
+}
+
+// --- Batch conversion --------------------------------------------------
+//
+// Two use cases, same mechanism: several pay periods for one employee
+// (catching up), or one paystub per crew member. Either way it's "process
+// N files, one at a time, produce one OF-288 per file, bundle them into a
+// single zip." A file that needs the operator's attention (a new
+// employee's profile, an unrecognized jobcode/trans code) pauses the batch
+// exactly like single-file mode pauses today — the same resolve panel and
+// profile fields are reused — and it resumes automatically once resolved,
+// retrying that same file rather than restarting the whole batch.
+
+let batchState = null; // { files, index, results: [{ok, label, detail}] }
+
+// Indirection so the resolve panel's "save & continue" buttons and the
+// profile-incomplete "click Convert again" flow both work whether they're
+// resuming a single conversion or a paused batch, without hardcoding which.
+let onResolved = convert;
+
+async function startBatch(fileList) {
+  batchState = { files: Array.from(fileList), index: 0, results: [] };
+  onResolved = processBatchStep;
+  downloadsEl.innerHTML = "";
+  batchSummaryEl.innerHTML = "";
+  try {
+    pyodide.FS.unlink("/batch_output.zip");
+  } catch {
+    // no previous batch output to clean up — fine
+  }
+  await processBatchStep();
+}
+
+async function addResultToZip(result) {
+  const base = outputBaseName(result);
+  const entries = result.out_paths.map((path, i) => [i === 0 ? `${base}.xlsx` : `${base}_page${i + 1}.xlsx`, path]);
+  pyodide.FS.writeFile("/batch_add_entries.json", new TextEncoder().encode(JSON.stringify(entries)));
+  await pyodide.runPythonAsync(`
+import zipfile, os, json
+
+entries = json.load(open("/batch_add_entries.json"))
+mode = "a" if os.path.exists("/batch_output.zip") else "w"
+with zipfile.ZipFile("/batch_output.zip", mode) as zf:
+    for arcname, filepath in entries:
+        zf.write(filepath, arcname)
+`);
+}
+
+function renderBatchSummary() {
+  batchSummaryEl.innerHTML = "";
+  if (!batchState) return;
+  for (const r of batchState.results) {
+    const row = document.createElement("div");
+    row.className = "batchRow" + (r.ok ? "" : " failed");
+    const name = document.createElement("span");
+    name.className = "batchRow-name";
+    name.textContent = r.label;
+    const detail = document.createElement("span");
+    detail.className = "batchRow-detail";
+    detail.textContent = r.detail;
+    row.append(name, detail);
+    batchSummaryEl.appendChild(row);
+  }
+}
+
+async function finishBatch() {
+  batchProgressEl.style.display = "none";
+  onResolved = convert;
+  const { files, results } = batchState;
+  const succeeded = results.filter((r) => r.ok).length;
+  const failed = results.length - succeeded;
+
+  if (succeeded > 0) {
+    const zipBytes = pyodide.FS.readFile("/batch_output.zip");
+    offerDownload(`OF288 batch (${succeeded} of ${files.length}).zip`, zipBytes, "application/zip");
+    setResult(
+      `Batch complete: ${succeeded} of ${files.length} converted successfully.` +
+      (failed ? ` ${failed} failed — see below.` : "")
+    );
+  } else {
+    setResult(`Batch complete: none of the ${files.length} file(s) converted successfully — see below.`, true);
+  }
+  renderBatchSummary();
+  batchState = null;
+}
+
+async function processBatchStep() {
+  if (!batchState) return;
+  if (batchState.index >= batchState.files.length) {
+    await finishBatch();
+    return;
+  }
+
+  const file = batchState.files[batchState.index];
+  batchProgressEl.style.display = "block";
+  const pct = Math.round((batchState.index / batchState.files.length) * 100);
+  batchProgressEl.innerHTML = "";
+  const label = document.createElement("div");
+  label.textContent = `Processing ${batchState.index + 1} of ${batchState.files.length}: ${file.name}`;
+  const bar = document.createElement("div");
+  bar.className = "bar";
+  const barFill = document.createElement("div");
+  barFill.className = "bar-fill";
+  barFill.style.width = `${pct}%`;
+  bar.appendChild(barFill);
+  batchProgressEl.append(label, bar);
+
+  resolvePanel.style.display = "none";
+  convertBtn.disabled = true;
+  const clearSlowWarning = startSlowWarning("Still working — this file may be unusually large or complex.");
+  try {
+    const outcome = await runConversionForCurrentFile(file);
+    switch (outcome.status) {
+      case "needs_profile":
+        setResult(
+          `New/incomplete profile for ${outcome.detectedName}. Fill in their info above ` +
+          `(at least Hired At and Hiring Unit Name), then click Convert to continue the batch.`
+        );
+        convertBtn.disabled = false;
+        clearSlowWarning();
+        return; // paused — Convert button resumes at this same file
+      case "needs_resolution":
+        setResult("Needs your input before the batch can continue — see below.");
+        showResolvePanel(outcome.unrecognized);
+        convertBtn.disabled = false;
+        clearSlowWarning();
+        return; // paused — resolve panel's Save/Exclude resumes at this same file
+      case "not_a_paystub":
+        batchState.results.push({ ok: false, label: file.name, detail: "Doesn't look like a Paycheck8 paystub" });
+        break;
+      case "hours_mismatch":
+        batchState.results.push({ ok: false, label: file.name, detail: outcome.message });
+        break;
+      case "error":
+        batchState.results.push({ ok: false, label: file.name, detail: outcome.message });
+        break;
+      case "ok":
+        await addResultToZip(outcome.result);
+        batchState.results.push({
+          ok: true,
+          label: outcome.result.employee_name,
+          detail: `PP${outcome.result.pay_period_number} ${outcome.result.year} — ${fmtHours(outcome.result.grand_total)} hrs`,
+        });
+        break;
+    }
+  } catch (err) {
+    console.error(err);
+    batchState.results.push({ ok: false, label: file.name, detail: errorMessage(err) });
+  } finally {
+    clearSlowWarning();
+  }
+
+  batchState.index += 1;
+  renderBatchSummary();
+  await processBatchStep(); // auto-advance — no user action needed for a clean success or a hard failure
 }
 
 // --- Resolution panel for unrecognized jobcodes/trans codes -------------
@@ -929,14 +1133,14 @@ function renderJobcodeResolveForm(info) {
     jobcodeRules[info.jobcode] = { include: true, group: values.incident_name, ...values };
     saveJobcodeRules(jobcodeRules);
     resolvePanel.style.display = "none";
-    convert();
+    onResolved();
   }));
 
   document.getElementById("rf_exclude").addEventListener("click", guard(() => {
     jobcodeRules[info.jobcode] = { include: false, note: "Excluded via web UI — not incident time." };
     saveJobcodeRules(jobcodeRules);
     resolvePanel.style.display = "none";
-    convert();
+    onResolved();
   }));
 }
 
@@ -980,11 +1184,15 @@ function renderTransCodeResolveForm(info) {
     }
     saveTransCodeRules(transRules);
     resolvePanel.style.display = "none";
-    convert();
+    onResolved();
   }));
 }
 
-convertBtn.addEventListener("click", convert);
+convertBtn.addEventListener("click", guard(() => {
+  if (batchState) return processBatchStep(); // resume a paused batch at its current file
+  if (fileInput.files.length > 1) return startBatch(fileInput.files);
+  return convert();
+}));
 // boot() has its own try/catch covering everything it does, but this is a
 // last-resort net: without it, any error boot() somehow doesn't catch
 // becomes a silent unhandled promise rejection — the page just sits on

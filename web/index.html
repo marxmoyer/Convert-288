@@ -77,6 +77,25 @@
   .resultCard-line-name { font-weight: 700; color: var(--fs-text); }
   .resultCard-line-detail { font-size: 0.85rem; color: #55604f; }
   .resultCard-empty { font-size: 0.85rem; color: #6b7566; font-style: italic; padding: 0.3rem 0; }
+
+  #batchProgress {
+    margin-top: 1rem; padding: 0.7rem 0.9rem; background: white; border: 1px solid var(--fs-border);
+    border-radius: 8px; font-size: 0.9rem; color: var(--fs-text);
+  }
+  #batchProgress .bar {
+    margin-top: 0.5rem; height: 6px; border-radius: 3px; background: var(--fs-tan-light); overflow: hidden;
+  }
+  #batchProgress .bar-fill { height: 100%; background: var(--fs-green); transition: width 0.2s ease; }
+
+  #batchSummary { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 1rem; }
+  #batchSummary .batchRow {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+    background: white; border: 1px solid var(--fs-border); border-radius: 6px; padding: 0.5rem 0.7rem; font-size: 0.85rem;
+  }
+  #batchSummary .batchRow.failed { background: #fdeaea; border-color: #e0a0a0; }
+  #batchSummary .batchRow-name { font-weight: 700; }
+  #batchSummary .batchRow-detail { color: #55604f; }
+  #batchSummary .batchRow.failed .batchRow-detail { color: #7a1f1f; }
   .resultCard-total {
     font-family: var(--font-display); font-weight: 800; font-size: 1.2rem; color: var(--fs-green-dark);
     text-align: right; padding-top: 0.4rem; border-top: 2px solid var(--fs-tan);
@@ -210,7 +229,9 @@
   <main>
     <div id="storageWarning" class="calloutBox" style="display:none"></div>
 
-    <p class="hint">Handles multiple employees: upload a paystub and it detects who it belongs to automatically.</p>
+    <p class="hint">Handles multiple employees: upload a paystub and it detects who it belongs to automatically.
+      Select or drop more than one paystub at once to batch-convert them — several pay periods for yourself, or
+      one paystub per crew member — and download every resulting OF-288 together as a single zip.</p>
 
     <div class="privacyNote calloutBox">
       <span class="icon">🔒</span>
@@ -245,10 +266,13 @@
     </fieldset>
 
     <div id="dropZone">
-      <p>Drag & drop your paystub PDF here, or</p>
-      <input type="file" id="fileInput" accept="application/pdf" disabled>
+      <p>Drag & drop one or more paystub PDFs here, or</p>
+      <input type="file" id="fileInput" accept="application/pdf" multiple disabled>
       <p class="filename" id="dropFilename"></p>
     </div>
+
+    <div id="batchProgress" style="display:none"></div>
+    <div id="batchSummary"></div>
 
     <div id="controls">
       <button id="convertBtn" disabled>Convert</button>
