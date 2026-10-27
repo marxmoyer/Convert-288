@@ -298,21 +298,20 @@ def _resolve_day(segments, needs, blockers):
     day) — the file order groups were first seen in doesn't reliably
     predict that.
 
-    Tries an exact match first. If that fails, falls back (still requiring
-    every remaining segment to be used and every need to be hit exactly,
-    so nothing is guessed) to:
-      - ignoring repeated/overlapping clock segments, and
-      - leaving out excluded blockers that have no clock time of their own
-        (leave taken that day, or a premium/differential code laid over
-        hours already counted as worked).
+    Repeated/overlapping clock segments are collapsed first. If no exact
+    match is found, falls back (still requiring every segment to be used
+    and every need to be hit exactly, so nothing is guessed) to leaving
+    out excluded blockers that have no clock time of their own (leave
+    taken that day, or a premium/differential code laid over hours
+    already counted as worked).
 
     Returns {group_name: [ClockSegment, ...]} for `needs` only, or None if
     no ordering divides the segments evenly.
     """
-    segment_options = [segments]
-    deduped = _without_overlaps(segments)
-    if len(deduped) != len(segments):
-        segment_options.append(deduped)
+    # Always collapse repeated/contained clock time first: nobody works the
+    # same hours twice, and leaving the copies in lets one copy go to an
+    # excluded code and the other to an incident, giving overlapping rows.
+    segments = _without_overlaps(segments)
 
     # Every subset of blockers, keeping as many as possible first.
     blocker_options = []
@@ -321,13 +320,12 @@ def _resolve_day(segments, needs, blockers):
             blocker_options.append([blockers[i] for i in combo])
 
     for blocker_set in blocker_options:
-        for segs in segment_options:
-            # Keys must be unique per call: two blockers can share a key
-            # (e.g. the same excluded jobcode twice), so index them.
-            items = needs + [(("blocker", i), h) for i, (_, h) in enumerate(blocker_set)]
-            result = _try_orderings(segs, items)
-            if result is not None:
-                return {name: result[name] for name, _ in needs}
+        # Keys must be unique per call: two blockers can share a key (e.g.
+        # the same excluded jobcode twice), so index them.
+        items = needs + [(("blocker", i), h) for i, (_, h) in enumerate(blocker_set)]
+        result = _try_orderings(segments, items)
+        if result is not None:
+            return {name: result[name] for name, _ in needs}
     return None
 
 
