@@ -85,12 +85,9 @@ class ScheduleAllocationError(ValueError):
     """Raised when a date's clock-in/out segments can't be cleanly divided
     among that date's incident groups by matching hour totals. Rather than
     guess at Start/Stop times for payroll data, surface this for manual
-    review. Carries the offending date so a caller (like the browser UI)
-    can offer to skip just that day and leave it blank on the form.
+    review.
     """
-    def __init__(self, message, *, date=None):
-        super().__init__(message)
-        self.date = date
+    pass
 
 
 def _load_json(path):
@@ -297,8 +294,7 @@ def allocate_rows(paystub, groups, reserved):
             names = ", ".join(name for name, _ in needs)
             raise ScheduleAllocationError(
                 f"On {d}, could not find any way to divide that day's clock-in/out segments "
-                f"to match the expected hours for {names}. This date needs manual review.",
-                date=d,
+                f"to match the expected hours for {names}. This date needs manual review."
             )
 
         for name, target in needs:
