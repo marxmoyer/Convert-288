@@ -18,7 +18,9 @@ from datetime import date
 OVERRIDE_RE = re.compile(r"^\d{3,6}$")
 DATE_HDR_RE = re.compile(r"^(\d{1,2})/(\d{1,2})$")
 TIME_RE = re.compile(r"^\d{4}$")
-FROM_TO_X_MIN, FROM_TO_X_MAX = 138, 146
+# Clock rows are ~10pt apart; a time within this of a From/To label's row
+# belongs to that row.
+CLOCK_ROW_TOLERANCE = 4
 
 # Real per-day values land within ~8pt of their date column's x0 (numbers
 # are right-aligned in narrower cells than the header labels). Week/grand
@@ -101,36 +103,48 @@ def _segment_hours(start, stop):
     return (stop_min - start_min) / 60
 
 
-def _extract_clock_segments(words, columns):
+def _extract_clock_segments(words, columns, grid_top):
     """The 'Clock Hours' table is a stack of From/To row-pairs (one pair per
     on-shift block that day: regular hours, then any later blocks split off
     by a rate/leave-category change). Each row's values bucket to date
     columns the same way as the daily-hours table.
+
+    Label and row positions vary slightly between PDF readers (pdfplumber
+    on the CLI vs pdfminer in the browser), so nothing here is pixel-exact:
+    a From/To label is any such word below the daily-hours header and left
+    of the first date column, and each time goes to whichever label row it
+    sits closest to.
     """
-    from_tops = sorted(
-        {w["top"] for w in words if w["text"] == "From" and FROM_TO_X_MIN <= w["x0"] <= FROM_TO_X_MAX}
-    )
-    to_tops = sorted(
-        {w["top"] for w in words if w["text"] == "To" and FROM_TO_X_MIN <= w["x0"] <= FROM_TO_X_MAX}
-    )
+    first_col_x = min(x for _, x in columns)
+
+    def label_tops(text):
+        return sorted({
+            w["top"] for w in words
+            if w["text"] == text and w["top"] > grid_top and w["x0"] < first_col_x - 20
+        })
+
+    from_tops, to_tops = label_tops("From"), label_tops("To")
+    row_tops = [(t, "from", i) for i, t in enumerate(from_tops)] + [(t, "to", i) for i, t in enumerate(to_tops)]
+    if not row_tops:
+        return {}
+
+    from_vals = [{} for _ in from_tops]  # per From row: date -> "HHMM"
+    to_vals = [{} for _ in to_tops]
+    for w in words:
+        if not TIME_RE.match(w["text"]):
+            continue
+        top, kind, i = min(row_tops, key=lambda r: abs(r[0] - w["top"]))
+        if abs(top - w["top"]) > CLOCK_ROW_TOLERANCE:
+            continue
+        d = _nearest_column(w["x0"], columns)
+        if d is None:
+            continue
+        (from_vals if kind == "from" else to_vals)[i][d] = w["text"]
 
     segments_by_date = {}
-    for from_top, to_top in zip(from_tops, to_tops):
-        from_vals = {}
-        for w in words:
-            if abs(w["top"] - from_top) < 1 and TIME_RE.match(w["text"]):
-                d = _nearest_column(w["x0"], columns)
-                if d is not None:
-                    from_vals[d] = w["text"]
-        to_vals = {}
-        for w in words:
-            if abs(w["top"] - to_top) < 1 and TIME_RE.match(w["text"]):
-                d = _nearest_column(w["x0"], columns)
-                if d is not None:
-                    to_vals[d] = w["text"]
-
-        for d, start in from_vals.items():
-            stop = to_vals.get(d)
+    for starts, stops in zip(from_vals, to_vals):
+        for d, start in starts.items():
+            stop = stops.get(d)
             if stop is None:
                 continue
             hours = _segment_hours(start, stop)
@@ -283,7 +297,7 @@ def parse_from_words(words):
             printed_total=total_hours, captured_total=captured_total,
         )
 
-    clock_segments = _extract_clock_segments(words, columns)
+    clock_segments = _extract_clock_segments(words, columns, grid_top)
     try:
         clock_debug = _describe_clock_area(words, columns)
     except Exception:
