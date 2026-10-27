@@ -634,7 +634,9 @@ async function boot() {
 
     setStatus(pick(FLAVOR.briefing));
     for (const path of [...SHARED_ASSETS, ...LOCAL_ASSETS]) {
-      const resp = await fetch(encodeURI(path));
+      // no-cache: always revalidate, so a stale cached copy of one file
+      // can't get mixed with a newer copy of another after an update.
+      const resp = await fetch(encodeURI(path), { cache: "no-cache" });
       if (!resp.ok) {
         throw new Error(`Failed to fetch ${path}: ${resp.status} ${resp.statusText}`);
       }
@@ -755,8 +757,17 @@ async function convert() {
 
     setStatus(pick(FLAVOR.digging));
     const resultJson = await pyodide.runPythonAsync(`
-import datetime, json, traceback
+import datetime, json, re, traceback
 import paycheck8_parser
+
+def _failed_date(e):
+    # Prefer the date the error carries; fall back to the "On YYYY-MM-DD"
+    # its message starts with.
+    d = getattr(e, "date", None)
+    if d is not None:
+        return d.isoformat()
+    m = re.search(r"\d{4}-\d{2}-\d{2}", str(e))
+    return m.group(0) if m else None
 
 def _run():
     import pdfminer_words, of288_filler, of288_excel_filler
@@ -799,7 +810,7 @@ def _run():
         return {
             "ok": False,
             "error": str(e),
-            "skippable_date": e.date.isoformat() if e.date else None,
+            "skippable_date": _failed_date(e),
         }
 
     lines = []

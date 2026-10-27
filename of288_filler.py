@@ -292,7 +292,17 @@ def allocate_rows(paystub, groups, reserved):
         needs = [(name, groups[name]["dates"][d]["hours"]) for name in group_order if d in groups[name]["dates"]]
         blockers = reserved.get(d, [])
 
-        consumed_by_name = _resolve_day(segments, needs, blockers)
+        try:
+            consumed_by_name = _resolve_day(segments, needs, blockers)
+        except Exception as e:
+            # Anything unexpected while working out a single day is still
+            # that day's problem — report it against the date so the caller
+            # can offer to skip just this day instead of failing outright.
+            raise ScheduleAllocationError(
+                f"On {d}, something unexpected went wrong working out that day's "
+                f"clock-in/out times ({e}). This date needs manual review.",
+                date=d,
+            ) from e
         if consumed_by_name is None:
             names = ", ".join(name for name, _ in needs)
             raise ScheduleAllocationError(
