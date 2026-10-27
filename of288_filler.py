@@ -376,7 +376,8 @@ def allocate_rows(paystub, groups, reserved):
             raise ScheduleAllocationError(
                 f"On {d}, could not find any way to divide that day's clock-in/out segments "
                 f"to match the expected hours for {names}. This date needs manual review."
-                + _describe_day(segments, needs, blockers),
+                + _describe_day(segments, needs, blockers)
+                + (f" [Diagnostic: {getattr(paystub, 'clock_debug', {}).get(d, '')}]" if not segments else ""),
                 date=d,
             )
 
