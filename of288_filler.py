@@ -9,7 +9,7 @@ line), or something else. Unrecognized codes raise an error rather than
 silently guessing, since this is payroll-adjacent data.
 """
 import json
-from itertools import permutations
+from itertools import combinations, permutations
 
 # pypdf is only needed by the PDF-output path below (_ensure_bold_font,
 # _enlarge_grid_rects, _fill_one_page/fill) — build_groups/allocate_rows,
@@ -242,35 +242,103 @@ def _consume_in_order(segments, ordered_items):
     return consumed_by_key
 
 
+def _try_orderings(segments, items):
+    """Natural (file) order first, since that covers the vast majority of
+    cases cheaply, then every other ordering of the (small, per-day) item
+    list. Returns _consume_in_order's result, or None."""
+    result = _consume_in_order(segments, items)
+    if result is not None:
+        return result
+    for perm in permutations(items):
+        if perm == tuple(items):
+            continue  # already tried above
+        result = _consume_in_order(segments, list(perm))
+        if result is not None:
+            return result
+    return None
+
+
+def _without_overlaps(segments):
+    """Drop clock segments that repeat or sit entirely inside another one.
+    Paycheck8 can list the same clock time twice — e.g. a differential like
+    hazard pay getting its own From/To rows over hours already clocked as
+    regular time — which would otherwise count those hours twice.
+    """
+    def span(seg):
+        start = int(seg.start[:2]) * 60 + int(seg.start[2:])
+        return start, start + round(seg.hours * 60)
+
+    kept = []
+    for i, seg in enumerate(segments):
+        s0, s1 = span(seg)
+        covered = False
+        for j, other in enumerate(segments):
+            if i == j:
+                continue
+            o0, o1 = span(other)
+            # contained in a different/longer segment, or an exact repeat
+            # of an earlier one (keep the first copy)
+            if o0 <= s0 and s1 <= o1 and ((o0, o1) != (s0, s1) or j < i):
+                covered = True
+                break
+        if not covered:
+            kept.append(seg)
+    return kept
+
+
 def _resolve_day(segments, needs, blockers):
     """Figure out which of a date's clock segments belong to which need.
 
     `needs` are (group_name, target_hours) pairs we actually want rows for;
     `blockers` are (key, target_hours) pairs for excluded jobcodes/trans
-    codes that still occupy real clock time that day but produce no output.
-    Both are needed because an excluded block can sit chronologically
-    between two tracked incidents (e.g. someone works incident A, then
-    their home-unit default duty, then incident B, same day) — the file
-    order groups were first seen in doesn't reliably predict that.
+    codes that may still occupy real clock time that day but produce no
+    output. Both are needed because an excluded block can sit
+    chronologically between two tracked incidents (e.g. someone works
+    incident A, then their home-unit default duty, then incident B, same
+    day) — the file order groups were first seen in doesn't reliably
+    predict that.
 
-    Tries the natural (file) order first since that covers the vast
-    majority of cases cheaply, then falls back to searching other
-    orderings of the (small, per-day) item list. Returns
-    {group_name: [ClockSegment, ...]} for `needs` only, or None if no
-    ordering divides the segments evenly.
+    Tries an exact match first. If that fails, falls back (still requiring
+    every remaining segment to be used and every need to be hit exactly,
+    so nothing is guessed) to:
+      - ignoring repeated/overlapping clock segments, and
+      - leaving out excluded blockers that have no clock time of their own
+        (leave taken that day, or a premium/differential code laid over
+        hours already counted as worked).
+
+    Returns {group_name: [ClockSegment, ...]} for `needs` only, or None if
+    no ordering divides the segments evenly.
     """
-    items = needs + blockers
-    result = _consume_in_order(segments, items)
-    if result is None:
-        for perm in permutations(items):
-            if perm == tuple(items):
-                continue  # already tried above
-            result = _consume_in_order(segments, list(perm))
+    segment_options = [segments]
+    deduped = _without_overlaps(segments)
+    if len(deduped) != len(segments):
+        segment_options.append(deduped)
+
+    # Every subset of blockers, keeping as many as possible first.
+    blocker_options = []
+    for keep in range(len(blockers), -1, -1):
+        for combo in combinations(range(len(blockers)), keep):
+            blocker_options.append([blockers[i] for i in combo])
+
+    for blocker_set in blocker_options:
+        for segs in segment_options:
+            # Keys must be unique per call: two blockers can share a key
+            # (e.g. the same excluded jobcode twice), so index them.
+            items = needs + [(("blocker", i), h) for i, (_, h) in enumerate(blocker_set)]
+            result = _try_orderings(segs, items)
             if result is not None:
-                break
-    if result is None:
-        return None
-    return {name: result[name] for name, _ in needs}
+                return {name: result[name] for name, _ in needs}
+    return None
+
+
+def _describe_day(segments, needs, blockers):
+    clock = ", ".join(f"{s.start}-{s.stop} ({s.hours:g}h)" for s in segments) or "none"
+    expected = ", ".join(f"{name} {h:g}h" for name, h in needs)
+    excluded = ", ".join(f"{key} {h:g}h" for key, h in blockers)
+    text = f" Clock times on the T&A Report: {clock}. Hours expected: {expected}"
+    if excluded:
+        text += f"; excluded codes also that day: {excluded}"
+    return text + "."
 
 
 def allocate_rows(paystub, groups, reserved):
@@ -307,7 +375,8 @@ def allocate_rows(paystub, groups, reserved):
             names = ", ".join(name for name, _ in needs)
             raise ScheduleAllocationError(
                 f"On {d}, could not find any way to divide that day's clock-in/out segments "
-                f"to match the expected hours for {names}. This date needs manual review.",
+                f"to match the expected hours for {names}. This date needs manual review."
+                + _describe_day(segments, needs, blockers),
                 date=d,
             )
 
