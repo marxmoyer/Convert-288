@@ -76,6 +76,10 @@ class Paystub:
     total_hours: float
     lines: list
     clock_segments: dict = field(default_factory=dict)  # date -> list[ClockSegment], chronological
+    # date -> short description of the raw text found around that date's
+    # column in the Clock Hours section, for diagnosing a day whose clock
+    # times didn't come through (times and positions only, nothing personal)
+    clock_debug: dict = field(default_factory=dict)
 
 
 def _nearest_column(x0, columns):
@@ -136,6 +140,31 @@ def _extract_clock_segments(words, columns):
         segments_by_date[d].sort(key=lambda seg: _hhmm_to_minutes(seg.start))
 
     return segments_by_date
+
+
+def _describe_clock_area(words, columns):
+    """For each date, list the raw words near its column in the Clock Hours
+    section (between the first From and last To rows), with positions."""
+    from_tops = sorted({w["top"] for w in words if w["text"] == "From"})
+    to_tops = sorted({w["top"] for w in words if w["text"] == "To"})
+    labels = (
+        f"From rows at y={[round(t) for t in from_tops]}, "
+        f"To rows at y={[round(t) for t in to_tops]} "
+        f"(label x={[round(w['x0']) for w in words if w['text'] in ('From', 'To')][:6]})"
+    )
+    if not from_tops or not to_tops:
+        return {d: labels for d, _ in columns}
+    lo, hi = min(from_tops) - 3, max(to_tops) + 3
+    area = [w for w in words if lo <= w["top"] <= hi]
+    debug = {}
+    for d, col_x in columns:
+        near = sorted(
+            (w for w in area if abs(w["x0"] - col_x) <= 25),
+            key=lambda w: (w["top"], w["x0"]),
+        )[:20]
+        found = ", ".join(f"'{w['text']}' x{w['x0']:.0f} y{w['top']:.0f}" for w in near) or "nothing"
+        debug[d] = f"Column x={col_x:.0f}. {labels}. Text near this column: {found}"
+    return debug
 
 
 def parse(pdf_path):
@@ -255,8 +284,12 @@ def parse_from_words(words):
         )
 
     clock_segments = _extract_clock_segments(words, columns)
+    try:
+        clock_debug = _describe_clock_area(words, columns)
+    except Exception:
+        clock_debug = {}  # diagnostics only — never let them break a conversion
 
     return Paystub(
         employee_name, year, pay_period_number, period_start, period_end,
-        total_hours, lines, clock_segments,
+        total_hours, lines, clock_segments, clock_debug,
     ), columns
