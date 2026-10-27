@@ -139,6 +139,14 @@ function setResultCard(result) {
   }
   card.appendChild(list);
 
+  if (result.skipped_dates && result.skipped_dates.length) {
+    const skipped = document.createElement("div");
+    skipped.className = "resultCard-skipped";
+    skipped.textContent =
+      `Skipped (left blank — fill in by hand): ${result.skipped_dates.join(", ")}`;
+    card.appendChild(skipped);
+  }
+
   const total = document.createElement("div");
   total.className = "resultCard-total";
   total.textContent = `Total: ${fmtHours(result.grand_total)} hrs`;
@@ -568,6 +576,8 @@ privacyToggleBtn.addEventListener("click", guard(() => {
 
 function setSelectedFile(file) {
   if (!file) return;
+  // Skipped days belong to one T&A Report — a new file starts fresh.
+  skippedDates.clear();
   const dt = new DataTransfer();
   dt.items.add(file);
   fileInput.files = dt.files;
@@ -624,7 +634,9 @@ async function boot() {
 
     setStatus(pick(FLAVOR.briefing));
     for (const path of [...SHARED_ASSETS, ...LOCAL_ASSETS]) {
-      const resp = await fetch(encodeURI(path));
+      // no-cache: always revalidate, so a stale cached copy of one file
+      // can't get mixed with a newer copy of another after an update.
+      const resp = await fetch(encodeURI(path), { cache: "no-cache" });
       if (!resp.ok) {
         throw new Error(`Failed to fetch ${path}: ${resp.status} ${resp.statusText}`);
       }
@@ -651,6 +663,11 @@ if "/" not in sys.path:
 }
 
 // --- Conversion --------------------------------------------------------
+
+// Dates (ISO strings) the user chose to skip after they couldn't be
+// converted — left blank on the OF-288 instead. Not saved anywhere: it
+// only applies to the T&A Report currently loaded.
+const skippedDates = new Set();
 
 async function detectEmployeeName() {
   const nameJson = await pyodide.runPythonAsync(`
@@ -736,11 +753,21 @@ async function convert() {
     pyodide.FS.writeFile("/profile.json", new TextEncoder().encode(JSON.stringify(profile)));
     pyodide.FS.writeFile("/jobcode_rules.json", new TextEncoder().encode(JSON.stringify(loadJobcodeRules())));
     pyodide.FS.writeFile("/trans_code_rules.json", new TextEncoder().encode(JSON.stringify(loadTransCodeRules())));
+    pyodide.FS.writeFile("/skip_dates.json", new TextEncoder().encode(JSON.stringify([...skippedDates])));
 
     setStatus(pick(FLAVOR.digging));
     const resultJson = await pyodide.runPythonAsync(`
-import json, traceback
+import datetime, json, re, traceback
 import paycheck8_parser
+
+def _failed_date(e):
+    # Prefer the date the error carries; fall back to the "On YYYY-MM-DD"
+    # its message starts with.
+    d = getattr(e, "date", None)
+    if d is not None:
+        return d.isoformat()
+    m = re.search(r"\d{4}-\d{2}-\d{2}", str(e))
+    return m.group(0) if m else None
 
 def _run():
     import pdfminer_words, of288_filler, of288_excel_filler
@@ -751,6 +778,7 @@ def _run():
     jobcode_rules = json.load(open("/jobcode_rules.json"))
     trans_code_rules = json.load(open("/trans_code_rules.json"))
     profile = json.load(open("/profile.json"))
+    skip_dates = {datetime.date.fromisoformat(s) for s in json.load(open("/skip_dates.json"))}
 
     try:
         groups, reserved = of288_filler.build_groups(stub, jobcode_rules, trans_code_rules)
@@ -766,12 +794,24 @@ def _run():
             },
         }
 
+    # Days the user chose to skip: drop them entirely so they're left blank
+    # on the form (and don't count toward any totals).
+    for g in groups.values():
+        for d in skip_dates:
+            g["dates"].pop(d, None)
+    for d in skip_dates:
+        reserved.pop(d, None)
+
     try:
         out_paths, grand_total = of288_excel_filler.fill(
             stub, groups, reserved, "/OF288 Excel Blank Template.xlsx", profile, "/output.xlsx"
         )
     except of288_filler.ScheduleAllocationError as e:
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": str(e),
+            "skippable_date": _failed_date(e),
+        }
 
     lines = []
     for name, g in groups.items():
@@ -795,6 +835,7 @@ def _run():
         "out_paths": out_paths,
         "pay_period_number": stub.pay_period_number,
         "year": stub.year,
+        "skipped_dates": sorted(d.isoformat() for d in skip_dates),
     }
 
 try:
@@ -823,6 +864,11 @@ json.dumps(result)
       showResolvePanel(result.unrecognized);
       return;
     }
+    if (!result.ok && result.skippable_date) {
+      setResult("Cannot convert:\n" + result.error, true);
+      showSkipDayPanel(result.skippable_date, result.error);
+      return;
+    }
     if (!result.ok) {
       if (result.debug) console.error(result.debug);
       setResult("Cannot convert:\n" + result.error, true);
@@ -849,6 +895,29 @@ json.dumps(result)
     convertBtn.disabled = false;
     clearSlowWarning();
   }
+}
+
+// --- Skip-a-day panel for dates that can't be converted -----------------
+
+function showSkipDayPanel(isoDate, message) {
+  resolvePanel.innerHTML = `
+    <h3 id="rf_header"></h3>
+    <div class="details" id="rf_details"></div>
+    <p class="hint">You can skip this day and finish the rest. It'll be left blank on the
+    OF-288 for you to fill in by hand.</p>
+    <div class="actions">
+      <button id="rf_skip">Skip this day &amp; leave it blank</button>
+    </div>
+  `;
+  resolvePanel.style.display = "block";
+  document.getElementById("rf_header").textContent = `Couldn't convert ${isoDate}`;
+  document.getElementById("rf_details").textContent = message;
+
+  document.getElementById("rf_skip").addEventListener("click", guard(() => {
+    skippedDates.add(isoDate);
+    resolvePanel.style.display = "none";
+    convert();
+  }));
 }
 
 // --- Resolution panel for unrecognized jobcodes/trans codes -------------
